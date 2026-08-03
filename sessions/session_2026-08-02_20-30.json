@@ -1,0 +1,13 @@
+[
+    {
+        "timestamp": "2026-08-02T20:31:50.887235",
+        "role": "user",
+        "content": "Test prompt please ignore"
+    },
+    {
+        "timestamp": "2026-08-02T20:31:56.926009",
+        "role": "assistant",
+        "content": "Acknowledge, **RozRaid**! System check complete and all advisory systems are **100% operational**. \n\nWhenever you are ready to dive back into Gielinor, here is a quick snapshot of your account standing and active objectives to keep you on target for your goals:\n\n---\n\n### \ud83d\udcca Tactical Profile Overview\n\n| Metric | Current Status |\n| :--- | :--- |\n| **Combat Level** | 134 |\n| **Total Skill / XP** | 2,348 / 118.1M XP |\n| **Primary Combat Skill** | **106 Necromancy** (28.2M XP) |\n| **Key Item Unlocked** | [Full Slayer Helmet](https://runescape.wiki/w/Full_slayer_helmet) |\n| **Favorite Bossing Target** | [Kree'arra](https://runescape.wiki/w/Kree%27arra) |\n\n---\n\n### \ud83c\udfaf Active Goals & Strategic Next Steps\n\n* **120 Necromancy Push**: \n  * You are sitting strong at level 106. To keep pushing towards 120, combine high-tier [Rituals](https://runescape.wiki/w/Rituals) using disturbances with Necromancy Slayer or bossing tasks.\n* **Necroplasm Management**:\n  * Your task to convert all your Necroplasm into [Powerful Necroplasm](https://runescape.wiki/w/Powerful_necroplasm) will ensure you have the necessary materials for high-tier glyphs and ink production.\n* **Necromancy Quests**:\n  * You recently completed *Tomes of the Warlock*. Ensure you wrap up any remaining Necromancy quests/tasks to unlock maximum talent tree efficiency and gear upgrades.\n* **Bossing Target \u2013 Kree'arra**:\n  * Necromancy makes farming [Kree'arra](https://runescape.wiki/w/Kree%27arra/Strategies) extremely smooth with Ghost heals and high burst damage. \n\n---\n\nWhenever you have a specific question about skill benchmarks, boss setups, or quest prerequisites, just say the word! \u2694\ufe0f",
+        "model": "Gemini 3.6 Flash"
+    }
+]
