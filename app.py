@@ -16,8 +16,12 @@ import streamlit.components.v1 as components
 
 
 import threading
+import pathlib
 
-SETTINGS_FILE = "settings.json"
+USER_HOME = pathlib.Path.home()
+APP_DIR = USER_HOME / ".rshelper"
+APP_DIR.mkdir(parents=True, exist_ok=True)
+SETTINGS_FILE = str(APP_DIR / "settings.json")
 INSTRUCTIONS_FILE = "agent_instructions.md"
 ARCHIVE_FILE = "account_profiles_archive.md"
 WIKI_CACHE_FILE = "wiki_pages_cache.json"
