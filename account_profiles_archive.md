@@ -1,69 +1,69 @@
 # 📜 Saved Account Profiles Archive
 
 ## Account: Rozraid
-*Last Updated via RuneMetrics: 2026-08-03 11:14:33*
+*Last Updated via RuneMetrics: 2026-08-31 20:20:35*
 SOURCE: Official Jagex RuneMetrics API
 Player Name: RozRaid
-Overall Rank: 273,989
-Combat Level: 135
-Total Skill: 2352
-Total XP: 120,162,451
+Overall Rank: 257,762
+Combat Level: 137
+Total Skill: 2424
+Total XP: 155,162,130
 Quests Complete: 240
 Quests Started: 0
 Quests Not Started: 123
 
 === SKILL LEVELS & XP ===
-Necromancy: Level 107 | 29,560,268 XP | Rank 107,095
-Firemaking: Level 99 | 13,361,415 XP | Rank 201,362
-Slayer: Level 95 | 9,220,561 XP | Rank 238,502
-Fishing: Level 94 | 8,264,900 XP | Rank 235,957
-Constitution: Level 93 | 7,595,609 XP | Rank 340,903
-Defence: Level 89 | 4,996,077 XP | Rank 351,668
-Archaeology: Level 86 | 3,898,868 XP | Rank 206,580
-Attack: Level 86 | 3,879,643 XP | Rank 352,503
-Prayer: Level 84 | 3,083,675 XP | Rank 335,670
-Smithing: Level 83 | 2,719,342 XP | Rank 334,965
-Fletching: Level 82 | 2,604,940 XP | Rank 343,074
-Cooking: Level 82 | 2,567,165 XP | Rank 334,501
-Agility: Level 82 | 2,549,880 XP | Rank 292,725
-Crafting: Level 82 | 2,522,345 XP | Rank 327,750
-Magic: Level 81 | 2,419,362 XP | Rank 419,044
-Strength: Level 81 | 2,407,249 XP | Rank 428,352
-Divination: Level 81 | 2,365,312 XP | Rank 288,122
-Summoning: Level 81 | 2,349,328 XP | Rank 302,898
-Ranged: Level 81 | 2,214,774 XP | Rank 385,981
-Mining: Level 79 | 1,951,187 XP | Rank 374,381
-Invention: Level 48 | 1,826,836 XP | Rank 273,776
-Woodcutting: Level 76 | 1,339,980 XP | Rank 489,347
-Herblore: Level 75 | 1,230,066 XP | Rank 372,034
-Construction: Level 74 | 1,146,645 XP | Rank 356,684
-Farming: Level 74 | 1,112,095 XP | Rank 303,803
-Thieving: Level 71 | 872,827 XP | Rank 337,470
-Runecrafting: Level 71 | 848,967 XP | Rank 320,223
-Hunter: Level 71 | 831,956 XP | Rank 339,999
-Dungeoneering: Level 64 | 421,179 XP | Rank 418,243
+Necromancy: Level 109 | 35,539,688 XP | Rank 99,611
+Firemaking: Level 99 | 13,405,119 XP | Rank 199,324
+Smithing: Level 99 | 13,056,941 XP | Rank 235,682
+Slayer: Level 95 | 9,332,643 XP | Rank 239,596
+Fishing: Level 95 | 9,021,755 XP | Rank 233,482
+Constitution: Level 94 | 7,955,377 XP | Rank 338,690
+Cooking: Level 93 | 7,378,840 XP | Rank 262,624
+Agility: Level 90 | 5,744,486 XP | Rank 242,924
+Defence: Level 90 | 5,541,351 XP | Rank 338,543
+Crafting: Level 90 | 5,439,543 XP | Rank 267,292
+Fletching: Level 87 | 4,287,191 XP | Rank 300,511
+Archaeology: Level 86 | 3,922,755 XP | Rank 207,536
+Attack: Level 86 | 3,879,809 XP | Rank 355,425
+Invention: Level 56 | 3,449,214 XP | Rank 260,543
+Magic: Level 84 | 3,138,464 XP | Rank 396,075
+Prayer: Level 84 | 3,102,862 XP | Rank 337,951
+Mining: Level 83 | 2,786,446 XP | Rank 333,153
+Summoning: Level 83 | 2,733,479 XP | Rank 282,433
+Ranged: Level 82 | 2,477,825 XP | Rank 375,922
+Strength: Level 81 | 2,407,416 XP | Rank 431,578
+Divination: Level 81 | 2,403,309 XP | Rank 287,556
+Woodcutting: Level 77 | 1,530,725 XP | Rank 468,342
+Herblore: Level 75 | 1,307,592 XP | Rank 368,886
+Construction: Level 74 | 1,146,645 XP | Rank 359,451
+Farming: Level 74 | 1,127,016 XP | Rank 305,667
+Hunter: Level 71 | 878,949 XP | Rank 337,898
+Thieving: Level 71 | 873,539 XP | Rank 341,243
+Runecrafting: Level 71 | 862,458 XP | Rank 320,885
+Dungeoneering: Level 64 | 430,693 XP | Rank 420,038
 
 === RECENT ACTIVITIES LOG ===
-[02-Aug-2026 23:04] Levelled up Summoning. (I levelled my Summoning skill, I am now level 79.)
-[02-Aug-2026 22:50] Levelled up Necromancy. (I levelled my Necromancy skill, I am now level 107.)
-[02-Aug-2026 18:52] 28000000XP in Necromancy (I now have at least 28000000 experience points in the Necromancy skill.)
-[02-Aug-2026 17:39] Levelled up Agility. (I levelled my Agility skill, I am now level 82.)
-[02-Aug-2026 15:10] Levelled up Necromancy. (I levelled my Necromancy skill, I am now level 106.)
-[02-Aug-2026 12:45] 26000000XP in Necromancy (I now have at least 26000000 experience points in the Necromancy skill.)
-[09-Jan-2026 22:18] Levelled up Dungeoneering. (I levelled my Dungeoneering skill, I am now level 64.)
-[09-Jan-2026 22:12] Quest complete: Tomes of the Warlock (I tracked down a series of books written by Orcus, a necromancer from the 2nd Age. From them, I learned of some ancient necromancy secrets.)
-[09-Jan-2026 22:12] Levelled up Runecrafting. (I levelled my Runecrafting skill, I am now level 71.)
-[09-Jan-2026 20:44] Levelled up Prayer. (I levelled my Prayer skill, I am now level 84.)
-[09-Jan-2026 20:10] Levelled up Fletching. (I levelled my Fletching skill, I am now level 82.)
-[09-Jan-2026 19:31] Levelled up Farming. (I levelled my Farming skill, I am now level 74.)
-[07-Jan-2026 21:46] Levelled up Prayer. (I levelled my Prayer skill, I am now level 83.)
-[07-Jan-2026 21:26] Levelled up Agility. (I levelled my Agility skill, I am now level 81.)
-[07-Jan-2026 20:54] Levelled up Fletching. (I levelled my Fletching skill, I am now level 81.)
-[07-Jan-2026 18:31] Levelled up Fletching. (I levelled my Fletching skill, I am now level 80.)
-[07-Jan-2026 17:51] Levelled up Cooking. (I levelled my Cooking skill, I am now level 82.)
-[07-Jan-2026 13:42] Levelled up Cooking. (I levelled my Cooking skill, I am now level 81.)
-[07-Jan-2026 13:08] Levelled up Farming. (I levelled my Farming skill, I am now level 71.)
-[06-Jan-2026 21:26] 24000000XP in Necromancy (I now have at least 24000000 experience points in the Necromancy skill.)
+[28-Aug-2026 18:57] Levelled all skills over 56 (By levelling up my Invention skill, I achieved at least level 56 in all skills.)
+[28-Aug-2026 18:57] Levelled up Invention. (I levelled my Invention skill, I am now level 56.)
+[28-Aug-2026 18:15] Levelled up Fishing. (I levelled my Fishing skill, I am now level 95.)
+[28-Aug-2026 16:49] Levelled all skills over 55 (By levelling up my Invention skill, I achieved at least level 55 in all skills.)
+[28-Aug-2026 16:49] Levelled up Invention. (I levelled my Invention skill, I am now level 55.)
+[28-Aug-2026 16:05] Levelled up Constitution. (I levelled my Constitution skill, I am now level 94.)
+[28-Aug-2026 13:43] Levelled up Ranged. (I levelled my Ranged skill, I am now level 82.)
+[28-Aug-2026 13:38] Levelled up Defence. (I levelled my Defence skill, I am now level 90.)
+[28-Aug-2026 13:16] Levelled up Cooking. (I levelled my Cooking skill, I am now level 93.)
+[28-Aug-2026 12:22] Levelled up Agility. (I levelled my Agility skill, I am now level 90.)
+[26-Aug-2026 15:00] Levelled up Cooking. (I levelled my Cooking skill, I am now level 92.)
+[24-Aug-2026 21:58] Levelled up Necromancy. (I levelled my Necromancy skill, I am now level 109.)
+[24-Aug-2026 18:41] 34000000XP in Necromancy (I now have at least 34000000 experience points in the Necromancy skill.)
+[24-Aug-2026 16:37] Levelled all skills over 54 (By levelling up my Invention skill, I achieved at least level 54 in all skills.)
+[24-Aug-2026 16:37] Levelled up Invention. (I levelled my Invention skill, I am now level 54.)
+[24-Aug-2026 16:37] Levelled up Smithing. (I levelled my Smithing skill, I am now level 99.)
+[23-Aug-2026 22:19] Levelled all skills over 53 (By levelling up my Invention skill, I achieved at least level 53 in all skills.)
+[23-Aug-2026 22:19] Levelled up Invention. (I levelled my Invention skill, I am now level 53.)
+[23-Aug-2026 22:19] Levelled up Smithing. (I levelled my Smithing skill, I am now level 98.)
+[23-Aug-2026 20:42] Levelled all skills over 52 (By levelling up my Invention skill, I achieved at least level 52 in all skills.)
 
 === COMPLETED QUESTS ===
 Quest Complete: A Christmas Reunion
@@ -102,6 +102,7 @@ Quest Complete: Cold War
 Quest Complete: Contact!
 Quest Complete: Cook's Assistant
 Quest Complete: Creature of Fenkenstrain
+Quest Complete: Curse of the Empty Lord (miniquest)
 Quest Complete: Deadliest Catch
 Quest Complete: Dealing with Scabaras
 Quest Complete: Death to the Dorgeshuun
@@ -255,7 +256,6 @@ Quest Complete: That Old Black Magic
 Quest Complete: The Blood Pact
 Quest Complete: The Chosen Commander
 Quest Complete: The Curse of Arrav
-Quest Complete: The Curse of Zaros (miniquest)
 Quest Complete: The Darkness of Hallowvale
 Quest Complete: The Dig Site
 Quest Complete: The Eyes of Glouphrie

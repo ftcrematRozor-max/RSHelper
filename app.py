@@ -15,9 +15,15 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 
+import threading
+
 SETTINGS_FILE = "settings.json"
 INSTRUCTIONS_FILE = "agent_instructions.md"
 ARCHIVE_FILE = "account_profiles_archive.md"
+WIKI_CACHE_FILE = "wiki_pages_cache.json"
+
+WIKI_VALID_TITLES = set()
+WIKI_CACHE_LOADED = False
 
 RS3_SKILL_NAMES = {
     0: "Attack", 1: "Defence", 2: "Strength", 3: "Constitution", 4: "Ranged",
@@ -158,6 +164,127 @@ RS3_BOSS_CATALOG = [
     {"name": "Yakamaru (Raids)", "icon": "Yakamaru", "rec_cb": 135, "tier": "Endgame"},
     {"name": "Vorkath & Zemouregal", "icon": "Vorkath", "rec_cb": 135, "tier": "Endgame"}
 ]
+
+def load_wiki_cache():
+    global WIKI_VALID_TITLES, WIKI_CACHE_LOADED
+    try:
+        if os.path.exists(WIKI_CACHE_FILE):
+            with open(WIKI_CACHE_FILE, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                WIKI_VALID_TITLES = set(data)
+                WIKI_CACHE_LOADED = True
+    except Exception as e:
+        print(f"Error loading wiki cache: {e}")
+
+def update_wiki_cache_background():
+    """Fetches all valid Wiki titles in a background thread once a week."""
+    global WIKI_VALID_TITLES, WIKI_CACHE_LOADED
+    try:
+        # Check if cache exists and is less than 7 days old
+        if os.path.exists(WIKI_CACHE_FILE):
+            file_mod_time = os.path.getmtime(WIKI_CACHE_FILE)
+            age_seconds = time.time() - file_mod_time
+            if age_seconds < (7 * 24 * 60 * 60):
+                # Less than 7 days old, just load it
+                if not WIKI_CACHE_LOADED:
+                    load_wiki_cache()
+                return
+        
+        # We need to fetch/update
+        print("Starting weekly background update of RuneScape Wiki links cache...")
+        pages = []
+        apcontinue = ''
+        while True:
+            url = f'https://runescape.wiki/api.php?action=query&list=allpages&aplimit=500&apfilterredir=all&format=json'
+            if apcontinue:
+                url += f'&apcontinue={urllib.parse.quote(apcontinue)}'
+            
+            res = requests.get(url, headers={'User-Agent': 'RSAgent/1.0'}, timeout=10)
+            if res.status_code == 429:
+                print("Rate limited by Wiki API, sleeping for 5 seconds...")
+                time.sleep(5)
+                continue
+            
+            try:
+                data = res.json()
+            except ValueError:
+                print(f"Failed to parse JSON (Status {res.status_code}). Stopping fetch.")
+                break
+
+            # Wiki titles replace underscores with spaces by default. 
+            # We lowercase everything to make matching case-insensitive.
+            pages.extend([p['title'].lower().replace('_', ' ') for p in data.get('query', {}).get('allpages', [])])
+            
+            if 'continue' in data:
+                apcontinue = data['continue']['apcontinue']
+                time.sleep(0.5)  # Be polite to the API
+            else:
+                break
+        
+        # Save cache
+        with open(WIKI_CACHE_FILE, 'w', encoding='utf-8') as f:
+            json.dump(pages, f)
+        
+        # Update memory
+        WIKI_VALID_TITLES = set(pages)
+        WIKI_CACHE_LOADED = True
+        print(f"Wiki cache updated successfully. {len(pages)} valid links loaded.")
+    except Exception as e:
+        print(f"Failed to update wiki cache: {e}")
+        # Try to load whatever we have
+        if not WIKI_CACHE_LOADED:
+            load_wiki_cache()
+
+def start_wiki_cache_updater():
+    """Starts the wiki cache updater in a background daemon thread."""
+    t = threading.Thread(target=update_wiki_cache_background, daemon=True)
+    t.start()
+
+def get_most_recent_wiki_links_file() -> str | None:
+    """Finds the path to the most recent wiki links / cache file in the working directory."""
+    candidates = []
+    if os.path.exists("."):
+        for fname in os.listdir("."):
+            fname_lower = fname.lower()
+            if (fname_lower.startswith("wiki") or "wiki_links" in fname_lower or "wiki_cache" in fname_lower) and fname_lower.endswith((".json", ".txt", ".md")):
+                candidates.append(fname)
+    if not candidates:
+        if os.path.exists(WIKI_CACHE_FILE):
+            return WIKI_CACHE_FILE
+        return None
+    candidates.sort(key=lambda f: os.path.getmtime(f), reverse=True)
+    return candidates[0]
+
+def format_wiki_links_source_block(file_path: str, max_links: int = 3000) -> str:
+    """Formats the most recent wiki links file into a structured source block for AI context."""
+    if not file_path or not os.path.exists(file_path):
+        return ""
+    mod_time = datetime.datetime.fromtimestamp(os.path.getmtime(file_path)).strftime("%Y-%m-%d %H:%M:%S")
+    file_size_kb = os.path.getsize(file_path) / 1024
+    
+    header = f"ATTACHED WIKI LINKS SOURCE FILE: '{file_path}' (Last Modified: {mod_time}, Size: {file_size_kb:.1f} KB)\n"
+    
+    try:
+        with open(file_path, "r", encoding="utf-8") as f:
+            if file_path.endswith(".json"):
+                data = json.load(f)
+                if isinstance(data, list):
+                    total_count = len(data)
+                    sampled = data[:max_links]
+                    links = [f"https://runescape.wiki/w/{urllib.parse.quote(t.replace(' ', '_'))}" for t in sampled if isinstance(t, str)]
+                    return (
+                        f"{header}"
+                        f"Description: Official RuneScape Wiki link cache index containing {total_count:,} indexed wiki page URLs.\n"
+                        f"Attached Wiki Link Sources (showing first {len(links):,} valid URLs):\n" +
+                        "\n".join(links)
+                    )
+                elif isinstance(data, dict):
+                    return f"{header}\nContent:\n{json.dumps(data, indent=2)[:50000]}"
+            content = f.read()
+            return f"{header}\nContent:\n{content[:50000]}"
+    except Exception as e:
+        return f"{header}\n(Error reading file: {e})"
+
 
 @st.cache_data(ttl=86400)
 def check_image_exists(url: str) -> bool:
@@ -494,7 +621,86 @@ def fetch_rs_wiki_info(query: str) -> str:
     except Exception as e:
         return f"Error querying Wiki: {e}"
 
+@st.cache_data(ttl=300)
+def fetch_ge_prices(items) -> dict:
+    if isinstance(items, list):
+        items = "|".join(items)
+    
+    encoded_query = urllib.parse.quote(items)
+    url = f"https://api.weirdgloop.org/exchange/history/rs/latest?name={encoded_query}"
+    
+    try:
+        res = requests.get(url, headers={"User-Agent": "RSAgent/1.0"}, timeout=3)
+        if res.status_code == 200:
+            return res.json()
+    except Exception:
+        pass
+    return {}
+
+def extract_ge_context_from_prompt(user_prompt: str) -> str:
+    common_items = [
+        "necroplasm", "powerful necroplasm", "greater necroplasm", "lesser necroplasm",
+        "pure essence", "rune essence", "water rune", "blood rune", "incandescent energy",
+        "chronotes", "feather", "vulnerability bomb", "saradomin brew", "super restore",
+        "overload", "herblore"
+    ]
+    
+    found_items = [item for item in common_items if item in user_prompt.lower()]
+    
+    if found_items:
+        prices_data = fetch_ge_prices(found_items)
+        if prices_data:
+            lines = ["LIVE GRAND EXCHANGE MARKET PRICES (REAL-TIME):"]
+            for item, data in prices_data.items():
+                if not isinstance(data, dict):
+                    continue
+                price = data.get("price", "Unknown")
+                volume = data.get("volume", "Unknown")
+                if isinstance(price, (int, float)):
+                    price = f"{price:,}"
+                if isinstance(volume, (int, float)):
+                    volume = f"{volume:,}"
+                lines.append(f"- {item}: {price} GP (Daily Volume: {volume})")
+            if len(lines) > 1:
+                return "\n".join(lines)
+    
+    return ""
+
+def verify_wiki_urls(text: str) -> str:
+    """Scans text for RuneScape wiki URLs and flags non-existent ones using the local cache."""
+    urls = set(re.findall(r'https://runescape\.wiki/w/[^\s\"\'\]]+', text))
+    for raw_url in urls:
+        clean_url = raw_url
+        while clean_url.endswith((')', '.', ',', '!', '?')):
+            if clean_url.endswith(')'):
+                if clean_url.count('(') >= clean_url.count(')'):
+                    break
+            clean_url = clean_url[:-1]
+        
+        # Extract title from URL (e.g. https://runescape.wiki/w/Noxious_scythe -> Noxious_scythe)
+        title_part = clean_url.split('/w/')[-1]
+        # Wiki URL decoding and normalisation
+        title_decoded = urllib.parse.unquote(title_part)
+        title_normalized = title_decoded.replace('_', ' ').lower()
+        
+        if WIKI_CACHE_LOADED and WIKI_VALID_TITLES:
+            if title_normalized not in WIKI_VALID_TITLES:
+                text = text.replace(clean_url, f"{clean_url} (⚠️ WARNING: This Wiki page does not exist)")
+        else:
+            # Fallback to HTTP if cache not loaded yet
+            try:
+                res = requests.get(clean_url, headers={"User-Agent": "RSAgent/1.0"}, timeout=3)
+                if res.status_code == 404 or "Nothing interesting happens" in res.text:
+                    text = text.replace(clean_url, f"{clean_url} (⚠️ WARNING: This Wiki page does not exist)")
+            except Exception:
+                pass
+    return text
+
 st.set_page_config(page_title="RS Helper", page_icon="⚔️", layout="wide")
+
+if 'wiki_cache_started' not in st.session_state:
+    start_wiki_cache_updater()
+    st.session_state['wiki_cache_started'] = True
 
 # Custom CSS for Collapsed Sidebar Protrusion, Full Screen Responsiveness & Dynamic Heights
 st.markdown("""
@@ -1031,6 +1237,26 @@ else:
                     st.warning(result)
                     
         st.markdown("---")
+        with st.expander("💰 Live GE Price Lookup", expanded=False):
+            ge_search = st.text_input("Enter item name(s) separated by pipe (e.g. Water rune|Pure essence)")
+            if ge_search:
+                with st.spinner("Fetching live prices..."):
+                    ge_data = fetch_ge_prices(ge_search)
+                    if ge_data:
+                        for item_name, info in ge_data.items():
+                            price = info.get('price', 0)
+                            volume = info.get('volume', 0)
+                            timestamp = info.get('timestamp', 'Unknown')
+                            st.markdown(f"**{item_name}**")
+                            c1, c2, c3 = st.columns(3)
+                            c1.metric("Price", f"{price:,} GP" if isinstance(price, int) else price)
+                            c2.metric("Volume", f"{volume:,}" if isinstance(volume, int) else volume)
+                            c3.metric("Last Updated", timestamp)
+                            st.divider()
+                    else:
+                        st.warning("No price data found for the given item(s).")
+
+        st.markdown("---")
         st.subheader("⚡ Quick Links Hub")
         
         # Popular Wiki hubs
@@ -1139,56 +1365,52 @@ else:
                     st.info("👋 Welcome to RS Helper! Type a message below or use a Quick Prompt to start.")
             else:
                 with st.container(height=680):
-                    for message in st.session_state.messages:
+                    for idx, message in enumerate(st.session_state.messages):
+                        if idx == len(st.session_state.messages) - 1 and message["role"] == "assistant":
+                            st.markdown("<div id='latest-assistant-response'></div>", unsafe_allow_html=True)
                         with st.chat_message(message["role"]):
                             st.markdown(message["content"])
                             if message.get("images"):
                                 img_cols = st.columns(min(len(message["images"]), 4))
-                                for idx, img_info in enumerate(message["images"]):
-                                    with img_cols[idx % 4]:
+                                for img_idx, img_info in enumerate(message["images"]):
+                                    with img_cols[img_idx % 4]:
                                         try:
                                             b64 = img_info.get("bytes_b64", "")
                                             if b64:
                                                 st.image(base64.b64decode(b64), caption=img_info.get("name", "Attachment"), use_container_width=True)
                                         except Exception:
                                             pass
+                
+                if st.session_state.get("just_responded", False):
+                    components.html(
+                        """
+                        <script>
+                            setTimeout(() => {
+                                const target = window.parent.document.getElementById('latest-assistant-response');
+                                if (target) {
+                                    target.scrollIntoView({behavior: 'smooth', block: 'start'});
+                                }
+                            }, 150);
+                        </script>
+                        """, height=0, width=0
+                    )
+                    st.session_state.just_responded = False
 
             # 2. Unified Command Dock (Above Chat Input)
             st.markdown("---")
             
-            # Action Chips
-            action_cols = st.columns(6)
-            with action_cols[0]:
-                if st.button("🎯 Goal", use_container_width=True): 
-                    st.session_state.pending_chat_prompt = "In today's session, I am focusing on: "
-            with action_cols[1]:
-                if st.button("🧭 Quest", use_container_width=True):
-                    quest_dialog()
-            with action_cols[2]:
-                if st.button("⚔️ Bossing", use_container_width=True): 
-                    boss_dialog()
-            with action_cols[3]:
-                if st.button("🛡️ Slayer", use_container_width=True):
-                    slayer_dialog()
-            with action_cols[4]:
-                if st.button("➕ Custom", use_container_width=True):
-                    custom_prompt_dialog()
+            st.markdown("""
+            <style>
+            /* Hide the file uploader limits text and slim down the container */
+            [data-testid="stFileUploadDropzone"] small {
+                display: none !important;
+            }
+            [data-testid="stFileUploaderDropzoneInstructions"] {
+                display: none !important;
+            }
+            </style>
+            """, unsafe_allow_html=True)
             
-            custom_prompts = settings.get("custom_prompts", [])
-            if custom_prompts:
-                with action_cols[5]:
-                    with st.popover("🔖 Saved", use_container_width=True):
-                        for idx, cp in enumerate(custom_prompts):
-                            if st.button(cp["name"], key=f"cp_{idx}", use_container_width=True):
-                                st.session_state.pending_chat_prompt = cp["text"]
-                                st.rerun()
-                            if st.button("❌ Delete", key=f"del_cp_{idx}"):
-                                custom_prompts.pop(idx)
-                                settings["custom_prompts"] = custom_prompts
-                                save_settings(settings.get("gemini_api_key"), settings.get("openai_api_key"), settings.get("rs_username"), settings.get("saved_accounts", []), custom_prompts, settings.get("custom_instructions", ""), settings.get("owned_items", []), settings.get("todo_tasks", []), settings.get("favorite_bosses", []))
-                                st.rerun()
-
-            # Upload / Attachments
             def render_uploader_widget():
                 active_uploader_key = f"file_uploader_key_{st.session_state.uploader_key_id}"
                 uploaded_files = st.file_uploader(
@@ -1212,19 +1434,53 @@ else:
                     if new_added:
                         st.toast("Image attachment(s) added!", icon="📎")
 
-            upload_col, preview_col = st.columns([2, 5])
-            with upload_col:
+            # Action Chips & Upload in a single row
+            # Upload column is slightly wider (1.5) to make it distinct and larger
+            action_cols = st.columns([1.5, 1, 1, 1, 1, 1, 1])
+            
+            with action_cols[0]:
                 render_uploader_widget()
-            with preview_col:
-                if st.session_state.attached_images:
-                    st.write("📎 **Attachments:**")
-                    preview_cols = st.columns(min(len(st.session_state.attached_images), 4))
-                    for idx, img in enumerate(list(st.session_state.attached_images)):
-                        with preview_cols[idx % 4]:
-                            st.image(img["bytes"], caption=img["name"][:12], width=65)
-                            if st.button("❌", key=f"del_img_{idx}", help=f"Remove '{img['name']}'"):
-                                st.session_state.attached_images.pop(idx)
+                
+            with action_cols[1]:
+                if st.button("🎯 Goal", use_container_width=True): 
+                    st.session_state.pending_chat_prompt = "In today's session, I am focusing on: "
+            with action_cols[2]:
+                if st.button("🧭 Quest", use_container_width=True):
+                    quest_dialog()
+            with action_cols[3]:
+                if st.button("⚔️ Bossing", use_container_width=True): 
+                    boss_dialog()
+            with action_cols[4]:
+                if st.button("🛡️ Slayer", use_container_width=True):
+                    slayer_dialog()
+            with action_cols[5]:
+                if st.button("➕ Custom", use_container_width=True):
+                    custom_prompt_dialog()
+            
+            custom_prompts = settings.get("custom_prompts", [])
+            if custom_prompts:
+                with action_cols[6]:
+                    with st.popover("🔖 Saved", use_container_width=True):
+                        for idx, cp in enumerate(custom_prompts):
+                            if st.button(cp["name"], key=f"cp_{idx}", use_container_width=True):
+                                st.session_state.pending_chat_prompt = cp["text"]
                                 st.rerun()
+                            if st.button("❌ Delete", key=f"del_cp_{idx}"):
+                                custom_prompts.pop(idx)
+                                settings["custom_prompts"] = custom_prompts
+                                save_settings(settings.get("gemini_api_key"), settings.get("openai_api_key"), settings.get("rs_username"), settings.get("saved_accounts", []), custom_prompts, settings.get("custom_instructions", ""), settings.get("owned_items", []), settings.get("todo_tasks", []), settings.get("favorite_bosses", []))
+                                st.rerun()
+
+            # Attachments Preview Section
+            if st.session_state.attached_images:
+                st.write("📎 **Attachments:**")
+                preview_cols = st.columns(min(len(st.session_state.attached_images), 6))
+                for idx, img in enumerate(list(st.session_state.attached_images)):
+                    with preview_cols[idx % 6]:
+                        st.image(img["bytes"], caption=img["name"][:12], width=65)
+                        if st.button("❌", key=f"del_img_{idx}", help=f"Remove '{img['name']}'"):
+                            st.session_state.attached_images.pop(idx)
+                            st.rerun()
 
             # Check for any pending prompt before chat_input instantiation
             if "pending_chat_prompt" in st.session_state and st.session_state.pending_chat_prompt:
@@ -1292,6 +1548,20 @@ else:
                             if search_term:
                                 context_blocks.append(f"WIKI KNOWLEDGE:\n{fetch_rs_wiki_info(search_term)}")
 
+                            ge_context = extract_ge_context_from_prompt(prompt)
+                            if ge_context:
+                                context_blocks.append(ge_context)
+
+                            # Attach most recent wiki links file as source on the first user prompt of the session
+                            user_msgs = [m for m in st.session_state.messages if m.get("role") == "user"]
+                            if len(user_msgs) == 1:
+                                wiki_file = get_most_recent_wiki_links_file()
+                                if wiki_file:
+                                    wiki_source_block = format_wiki_links_source_block(wiki_file)
+                                    if wiki_source_block:
+                                        context_blocks.append(wiki_source_block)
+                                        st.toast(f"Attached source file: '{wiki_file}'", icon="📎")
+
                             full_context = "\n\n".join(context_blocks)
                             final_prompt = f"User Request: {prompt}\n\nContext:\n{full_context}"
 
@@ -1349,9 +1619,11 @@ else:
                                 )
                                 answer = response.choices[0].message.content
 
+                            answer = verify_wiki_urls(answer)
                             st.markdown(answer)
                             st.session_state.messages.append({"role": "assistant", "content": answer})
                             log_interaction("assistant", answer, active_model)
+                            st.session_state.just_responded = True
                             st.rerun()
 
                         except Exception as e:
