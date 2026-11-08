@@ -1,0 +1,11 @@
+{
+    "name": "RS Helper Spike",
+    "version": "0.0.0",
+    "contactEmailAddress": "replace-me@example.com",
+    "requiredDependencies": {},
+    "optionalDependencies": {},
+    "requiredPermissions": [],
+    "optionalPermissions": [ "httpAccess" ],
+    "urls": { "claude": "https://api.anthropic.com/" },
+    "hasRibbonIcon": true
+}

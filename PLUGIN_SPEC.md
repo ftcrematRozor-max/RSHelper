@@ -126,7 +126,7 @@ Rules: one job per file, under ~300 lines each, a header comment explaining the 
 | Ribbon icon clicked | `Event.ContentLayerReady` (`component`) | Build the Chat + Explorer UI inside the provided layer (§5). The layer is "cleared of pre-existing elements immediately before this event is called", so rebuild from saved state each time. |
 | Launcher button or hotkey | `ui.Hook.ONBUTTONPRESSED` / `Event.KeyDown` | Show the popup on the plugin build layer, creating it the first time (§5.1). |
 | Plugin Hub → Settings icon | `Event.SettingsLayerReady` (`component`) | Build the Settings page (§5.4). |
-| Login / world hop / lobby | `Event.GameStateChanged` (`newState`: `GAME` = 30, `LOBBY` = 20 …) | On `GAME`: refresh profile and quests, and load this character's data. On leaving `GAME`: save a snapshot. |
+| Login / world hop / lobby | `Event.GameStateChanged` (`newState`: `GAME` = 30, `LOBBY` = 20 …) | On `GAME`: refresh profile and quests, and load this character's data. On leaving `GAME`: save a snapshot. The popup's components can die with their interface (Jagex: "components only live for as long as their interface is loaded"), so check the window on every return to `GAME` and rebuild it from saved state if needed (spike test S9). |
 | XP gained | `Event.SkillTransmit` (`skill`, `newXP`, `newGameplayLevel` …) | Update that skill in the profile cache. Re-mark the Profile tab dirty. |
 | Quest progress | `Event.VarTransmit` (`var`, `newValue`) | If `var` is one of the quests' `masterQuestVars[1].varPlayer`, refresh that quest. |
 | Inventory seen / changed | `Event.InventoryAdded` / `InventoryUpdated` | Re-check owned major items (§6.8). |

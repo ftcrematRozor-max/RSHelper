@@ -36,9 +36,9 @@ Everything else in the spec (Explorer tabs, wiki, citations, memory, Gemini and 
 
 ## 2. Step 0 — beta-world spike (do this first)
 
-Some unknowns in the spec could change how Build 1 is written. A throwaway plugin answers them in one beta session before the real code starts.
+Some unknowns in the spec could change how Build 1 is written. A throwaway plugin answers nine of them in one beta session before the real code starts.
 
-- **Who does what:** Claude writes `plugin/spike/` (about 150 lines, never zipped). You run it in the beta world and paste the console output back.
+- **Who does what:** Claude writes `plugin/spike/` (done: two dev plugins, a smoke test, and a step-by-step guide in `plugin/spike/README.md`, never zipped). You run it in the beta world and send back the console summary.
 - **What you need:** a **separate** Anthropic API key with a low spending limit. Create it in the Anthropic Console and use it only for testing.
 
 | # | Question (spec ref) | How the spike checks | If the answer is "no" |
@@ -51,6 +51,7 @@ Some unknowns in the spec could change how Build 1 is written. A throwaway plugi
 | S6 | Do `Event.Logic` / `Event.ServerLogic` fire in the lobby? | Count ticks in the lobby | Timers (thinking counter, watchdog) only run in-world, and the setup panel tells the player to log in |
 | S7 | What size is the ribbon content layer? | `print(component.width, component.height)` | The launcher shows only a button and one status line |
 | S8 | Is the plugin build layer above the game's interfaces, and clickable? | A GroupBox with a button | Use the ribbon content layer as the whole window |
+| S9 | Does the popup survive a trip to the lobby or a world hop? Jagex: "components only live for as long as their interface is loaded" | Read a property of the old window after returning to the game; rebuild it if that fails | Rebuild the window from saved state on every return to the game (planned in Step 3 either way) |
 
 Answers go in `plugin/SPIKE_NOTES.md`. If any answer changes the plan, update this file before Step 1.
 
@@ -80,6 +81,7 @@ Each step is **one pull request** on its own branch, small enough to read line b
 ### Step 3 — Window frame and collapsing
 - **Build:** `ui/window.lua` (popup `GroupBox` on `TOPLEVEL_V2__PLUGIN_BUILD_LAYER_TOP`, header with **X**, horizontal `ui.Panel` with the Chat and Explorer panes, ◀ ▶ collapse strips, status bar) and `ui/widgets.lua` (collapsible section helper).
 - **Saved state:** `settings.window` = `chatCollapsed`, `explorerCollapsed`, `quickActionsCollapsed`, `setupCollapsed`.
+- **Rebuild on return to the game:** on `GameStateChanged` → `GAME`, check the window still works and rebuild it from saved state if not (S9).
 - **Done when:** test case 10 passes (each pane collapses, the open one fills the space, both can collapse, and the states survive `prl`), and the window follows a client resize (`Event.WindowSizeChanged`).
 
 ### Step 4 — Setup panel and Settings page
@@ -258,6 +260,7 @@ Run this in one session, in order:
 | No clock in Lua (S4) | Consent records the plugin version and notice version without a date |
 | Timers don't tick in the lobby (S6) | The chat pane says "Log in to a world to chat" while in the lobby |
 | The plugin build layer can't take clicks (S8) | The whole window lives in the ribbon content layer |
+| The window dies on a trip to the lobby (S9) | `ui/window.lua` rebuilds itself from `settings.window` on `GameStateChanged` → `GAME`; the chat text is kept in `ai/chat.lua`, so nothing visible is lost |
 
 ---
 
