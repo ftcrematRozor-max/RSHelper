@@ -1,0 +1,9 @@
+{
+    "name": "RS Helper Keywatch (dev)",
+    "version": "0.0.0",
+    "contactEmailAddress": "replace-me@example.com",
+    "requiredDependencies": {},
+    "optionalDependencies": {},
+    "requiredPermissions": [],
+    "optionalPermissions": []
+}
