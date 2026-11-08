@@ -246,7 +246,7 @@ Jagex: "Since plugins can't create new interfaces, they must instead use compone
 │ The Explorer works without them.    │
 │                                     │
 │ ✓ 1 Web access    Allowed           │
-│ ○ 2 Data notice   [Read and accept] │
+│ ○ 2 Consent       [Read and sign]   │
 │ ○ 3 API key       (●) Claude        │
 │                   ( ) Gemini        │
 │                   ( ) OpenAI        │
@@ -255,7 +255,7 @@ Jagex: "Since plugins can't create new interfaces, they must instead use compone
 ```
 
 1. **Web access** shows the result of `Plugin.HasPermission(PluginPermissions.httpAccess)`. Jagex documents no Lua call that asks for a permission (only `HasPermission` and the `OptionalPermissionChanged` event), so this step explains where to allow it: "Plugin Hub → Manage → RS Helper → allow Web access". It ticks itself when `Event.OptionalPermissionChanged` reports `httpAccess` enabled (§14 Q18).
-2. **Data notice:** the §9 text, naming the company for the chosen provider (Anthropic, Google or OpenAI). **Accept** stores `aiConsent = true`. Both the data notice and the key step stay greyed out until web access is allowed, because nothing is sent before that.
+2. **Consent:** the signed, recorded consent in §9.2, naming the company for the chosen provider (Anthropic, Google or OpenAI). It stays greyed out until web access is allowed, because nothing is sent before that. The key step unlocks only after consent is signed.
 3. **API key:** provider choice (`ui.RadioGroup`) and a visible key field (§5.6). **Save** stores the key and shows only `••••` plus its last 4 characters. **Check key** calls the provider's free model-list endpoint, which uses no tokens: Claude `GET v1/models` (headers `x-api-key` and `anthropic-version`), Gemini `GET v1beta/models` (`x-goog-api-key`), OpenAI `GET v1/models` (`Authorization: Bearer`). It reports "Key works" or the error message from §8.1.
 
 When all three are done, the panel closes and the chat pane appears. Settings (⚙) keeps the same three controls for later changes. If permission is revoked later, or the key is forgotten, the panel comes back.
@@ -285,7 +285,7 @@ When all three are done, the panel closes and the chat pane appears. Settings (�
 
 ### 5.6 Input and keyboard
 
-- **API keys:** a field set to `HIDDEN` or `SHOW_LAST` becomes "restricted" and **the plugin then reads its content as an empty string**. So the key is typed in a **visible** field marked "Paste your key", saved on Enter, then the field is cleared and the key shown only as `••••` plus its last 4 characters. Warn: "Don't do this while streaming."
+- **API keys:** a field set to `HIDDEN` or `SHOW_LAST` becomes "restricted" and **the plugin then reads its content as an empty string**. So the key is typed in a **visible** field marked "Paste your key", saved on Enter, then the field is cleared and the key shown only as `••••` plus its last 4 characters. Warn: "Don't do this while streaming." The field also says what §9.3 confirms: **other plugins can see keystrokes while you type**, so paste the key rather than typing it if pasting works (§14 Q14).
 - **Pasting** isn't documented for `InputField` (§14 Q14). Typing a 40–160-character key by hand would be painful, so check this in the beta first.
 - **Hotkey:** Jagex's key events are read-only, so the plugin can't stop the game from also seeing the key. Use a modifier combination the game doesn't use by default, and let players change or turn it off.
 - `Keyboard.IsAvailable()` is false on mobile. Hide the hotkey setting there.
@@ -463,20 +463,22 @@ PersistentDB stores values per plugin, and they persist across game sessions. Ja
 
 | Key | Type | Contents | Replaces (app) |
 |---|---|---|---|
-| `settings` | StructuredData | `{ provider = "claude"\|"gemini"\|"openai", claudeModel = "claude-opus-5-5", claudeEffort = "medium", geminiModel = "gemini-3.6-flash", openaiModel = "gpt-4o", temperature = 0.4 (Gemini/OpenAI only), maxAnswerWords = 250, debug = false, hotkey = "ctrl+shift+h", window = { size = "M", x = .., y = .., chatCollapsed = false, explorerCollapsed = false, quickActionsCollapsed = false, setupCollapsed = false }, aiConsent = false }` | `settings.json` (global parts) |
+| `settings` | StructuredData | `{ provider = "claude"\|"gemini"\|"openai", claudeModel = "claude-opus-5-5", claudeEffort = "medium", geminiModel = "gemini-3.6-flash", openaiModel = "gpt-4o", temperature = 0.4 (Gemini/OpenAI only), maxAnswerWords = 250, debug = false, hotkey = "ctrl+shift+h", window = { size = "M", x = .., y = .., chatCollapsed = false, explorerCollapsed = false, quickActionsCollapsed = false, setupCollapsed = false } }` (consent moved to `<char>.consent`, §9.2) | `settings.json` (global parts) |
 | `keys` | StructuredData | `{ claude = "", gemini = "", openai = "" }` | `gemini_api_key`, `openai_api_key` (Claude is new) |
 | `<char>.todo` | StructuredData | `{ nextId = 7, items = { { id = 6, text = "...", done = false, priority = "high"\|"med"\|"low", category = "quest"\|"skill"\|"boss"\|"other" } } }` | `todo_tasks` |
 | `<char>.favBosses` | StructuredData | `{ "Giant Mole", ... }` | `favorite_bosses` |
 | `<char>.ownedItems` | StructuredData | `{ slayer_helm_1 = true, ... }` (manual ticks only, see §6.8) | `owned_items` |
 | `<char>.prompts` | StructuredData | `{ { name = "...", text = "..." } }` | `custom_prompts` |
 | `<char>.customInstructions` | String | free text, max 2,000 chars | `custom_instructions` |
+| `<char>.consent` | StructuredData | the current consent per provider: `{ claude = { noticeVersion = 1, signedName = "RozRaid", acceptedAt = <time or nil>, pluginVersion = "0.0.1" } }` (§9.2) | new |
+| `<char>.consentLog` | StructuredData | the last 20 consent events: `{ { event = "accepted"\|"withdrawn", provider, noticeVersion, at, pluginVersion } }` | new |
 | `<char>.memory` | StructuredData | last 3 sessions: `{ { date = "2026-11-08", summary = "..." } }`, each summary ≤ 300 chars | `sessions/*.json` + `load_past_session_memories` |
 | `<char>.snapshot` | StructuredData | last known profile (skills, QP, combat level, time), used in the lobby or when the client data isn't loaded | `account_profiles_archive.md` |
 | `cache.<name>` | StructuredData | `{ fetchedAt = <time>, data = {...} }` for wiki category lists, events and so on | `st.cache_data` |
 
 Fixes carried in from the app's bugs: per-character data (the app stored everything globally), unique task ids (`nextId` counter instead of `task_<unix time>`), and real categories (the app's category filters did nothing).
 
-**Storing API keys.** PersistentDB is a local file, so the keys sit in plain text on the player's device, the same as the desktop app's `settings.json` today. The listing must say this (§12). Jagex makes masked input fields unreadable to the plugin (their content reads as an empty string), so keys are typed in a visible field that's cleared on save; afterwards only `••••` plus the last 4 characters is shown (§5.6). Settings must include a **Forget keys** button that deletes `keys`.
+**Storing API keys.** PersistentDB is a local file, so the keys sit in plain text on the player's device, the same as the desktop app's `settings.json` today. The listing must say this (§12). Jagex makes masked input fields unreadable to the plugin (their content reads as an empty string), so keys are typed in a visible field that's cleared on save; afterwards only `••••` plus the last 4 characters is shown (§5.6). Settings must include a **Forget keys** button that deletes `keys`. Who else can see a key is set out in §9.3.
 
 ---
 
@@ -576,8 +578,56 @@ When the window closes, or after 30 minutes idle, save a ≤ 300-character summa
 
 - **Never sent anywhere:** chat messages from the game, other players' names or data, location, inventory contents beyond the major-items ticks.
 - **Data protection case:** Case 3 (USA, no UK adequacy). Anthropic offers no EU or UK processing: its `inference_geo` setting only chooses `"global"` (the default) or `"us"`, so it doesn't change the case. Required: endpoints, security measures (HTTPS; keys held only on the device), a privacy notice (the ICO generator is fine), a public contact email (§12), and Jagex's adequacy exception form (password `RS3API`), which collects the developer's name, country and a data-protection email.
+- **Bring-your-own-key means the player's own agreement applies.** Data goes from the player's game client straight to the AI provider account the player chose. RS Helper has no server, so the developer never receives questions, answers, stats or keys.
 - **Offline mode:** without `httpAccess`, nothing leaves the device (Case 1 behaviour). Say this in the listing.
-- **Before the first AI request:** show a one-time notice: "Your question and a summary of your stats will be sent to <Anthropic / Google / OpenAI> using your own API key." Store `aiConsent = true` in `settings`.
+
+### 9.1 Who handles the data
+
+| Party | What it sees | Under whose terms |
+|---|---|---|
+| The chosen AI provider (Anthropic, Google or OpenAI) | Questions, answers, the context summary, and the API key | **The player's own agreement with that provider**, including its usage policy: Anthropic's Usage Policy (anthropic.com/legal/aup), the Gemini API terms (ai.google.dev/gemini-api/terms), or OpenAI's usage policies (openai.com/policies/usage-policies). Confirm the URLs before release. |
+| Jagex | Whatever passes through the game client (see §9.3) | The Jagex EULA |
+| RS Helper's developer | Nothing: there is no RS Helper server | n/a |
+
+### 9.2 Consent: explicit, signed and recorded (owner review, 2026-11-08)
+
+Before **anything** is sent to an AI provider, the player completes this screen. It's step 2 of the setup panel (§5.3) and is also reachable from Settings.
+
+```
+Before the advisor sends anything, please confirm:
+
+[ ] I choose to send my questions, this chat and a summary of my
+    character's stats to Anthropic, using my own API key.
+[ ] Anthropic handles this data under my own agreement with them and
+    their Usage Policy (anthropic.com/legal/aup), not RS Helper's.
+[ ] I understand my API key is stored as plain text on this device.
+    Other plugins can see keystrokes while I type it, and Jagex may be
+    able to see it (details in Settings → Privacy).
+
+Sign by typing your character name: [ RozRaid            ]
+                                               [ I agree ]
+```
+
+- **Explicit:** all three boxes must be ticked, and **I agree** stays disabled until they are.
+- **Signed:** the typed name must match `Player.GetEntity().displayName` (ignoring case, and treating spaces and underscores as the same, as Jagex does).
+- **Recorded:** accepting writes `<char>.consent.<provider>` with the notice version, the signed name, the time (if `os.time` exists, §14 Q1) and the plugin version, and appends an entry to `<char>.consentLog` (§7). The record stays on the player's device. With no server, the developer never receives it.
+- **Shown and revocable:** Settings → Privacy shows "Consent given <date> for Anthropic (notice v1)" with a **Withdraw** button. Withdrawing stops all AI requests at once, logs a `withdrawn` event and brings back the setup panel.
+- **Asked again when:** the player switches provider, the notice text changes (its version number goes up), or a different character logs in.
+- `ai/chat.lua` checks for a valid consent record **before every request**, not only at setup.
+
+### 9.3 Who can see the API key (checked against Jagex's docs, 2026-11-08)
+
+| Who | Can they see the key? | Why |
+|---|---|---|
+| **Other plugins, reading storage** | **No** | "Records are isolated per plugin, preventing plugins from accessing or modifying eachother's data." (PersistentDB) |
+| **Other plugins, while the key is typed** | **Yes** | `Event.KeyTyped` and `Event.KeyDown` reach every plugin. Jagex blocks them only while a *restricted* field is focused ("such as an InputField with hidden text"), and a restricted field's content can't be read by our own plugin either (§5.6). Whether pasting avoids these events is unknown (§14 Q14). |
+| **Other plugins, reading our window** | Not documented | Whether one plugin can read another plugin's on-screen components isn't covered. The key field is cleared the moment it's saved. |
+| **Plugins that depend on RS Helper** | **No** | RS Helper exports nothing, and "Allow dependents" stays off on mod.io. |
+| **Jagex** | **Possibly** | The key is sent by the game client's own `HTTPRequest` system and stored in the client's data folder. Jagex's docs don't say whether the client logs plugin requests or storage, so it can't be ruled out. |
+| **Anyone with access to the computer** | **Yes** | PersistentDB is a plain file on the device ("variables in the database are written to a file"). |
+| **The chosen AI provider** | **Yes** | It needs the key to authenticate the request. |
+
+**Advice shown to players** (in the consent screen, Settings → Privacy and the listing): create a **separate API key just for RS Helper**, set a **low spending limit** on it in the provider's console, and revoke it there if anything looks wrong. **Forget key** removes it from the device.
 
 ---
 
@@ -691,7 +741,7 @@ From Jagex's "Submission process" and "Example description" pages.
 - [ ] **EULA**: the exact statement: "This Plugin uses software licensed by Jagex to the developer under the terms of the Jagex End User Licence Agreement (EULA) found at https://legal.jagex.com/docs/terms/eula (and all terms incorporated into it by reference). The development and any use of the Plugin is at all times subject to the Jagex EULA."
 - [ ] **How the advisor answers**: facts come from the RuneScape Wiki and are cited (CC BY-NC-SA 3.0), and the advisor's own suggestions are marked as such. It gives planning and preparation help only, never live combat calls.
 - [ ] **Permissions**: one paragraph per URL: which data goes to which base URL, and why. Say that the plugin works without `httpAccess` in offline mode.
-- [ ] **Data protection (Case 3)**: data used, endpoints, security measures, a link to the privacy notice, and a note that API keys are stored on the device in plain text.
+- [ ] **Data protection (Case 3)**: data used, endpoints, security measures, a link to the privacy notice, the bring-your-own-key model (data goes under the player's own agreement with their chosen provider), how consent is signed and recorded (§9.2), and who can see the API key (§9.3).
 
 **After uploading**
 - [ ] Fill in Jagex's adequacy exception form (data sent to the USA).
@@ -708,11 +758,12 @@ Each milestone is small enough to review by hand and to moderate.
 
 | Version | Scope | Permissions | Review risk |
 |---|---|---|---|
+| **0.0.1 "First build"** (beta world only, not submitted) | Window shell with collapsing panes, setup panel (web access, signed consent, API key), and chat with **one** provider (Claude). Plan: `PLUGIN_BUILD1_PLAN.md`. | `httpAccess` (claude) | Not submitted; tested in the beta world only |
 | **0.1 "Explorer"** | Window shell (with collapsing panes), Profile, Quests (from the client), To-Do, Items (manual ticks), Bosses (preparation), Settings, and the out-of-game test harness. No network. | none | Low ("planning tools … using player-known data" are listed as Allowed) |
 | **0.2 "Wiki"** | Wiki search and reader, category lists, GE prices, Adventurer's Log events and quest eligibility | `httpAccess` (wiki, advlog, ge) | Medium (any permission is "subject to review") |
 | **0.3 "Advisor"** | AI chat (Claude/Gemini/OpenAI), context builder, citation check, session memory, prompt templates | `httpAccess` (+ claude, gemini, openai) | Higher ("interpreted or actionable gameplay recommendations"), Case 3 data protection |
 
-Shipping 0.1 first gets a plugin through moderation once, cheaply, before adding the parts that get the most scrutiny.
+The first build (0.0.1) proves the hardest unknowns early: key entry, consent, HTTP to an AI provider, and the chat UI. It stays in the beta world. For submission, 0.1 still goes first, so a plugin gets through moderation once, cheaply, before adding the parts that get the most scrutiny.
 
 ---
 
@@ -733,7 +784,7 @@ Shipping 0.1 first gets a plugin through moderation once, cheaply, before adding
 | Q11 | Does the game font render emoji? | Badges, catalog labels | Coloured text and game sprites |
 | Q12 | Is the AI advisor acceptable to moderators (A1)? | The whole Chat half | Ship 0.1 / 0.2 without it |
 | Q13 | Where is the Weird Gloop GE API hosted? | Data-protection case for that URL (only item names are sent) | Say so in the listing |
-| Q14 | Can players paste (Ctrl+V) into a `ui.InputField`? | **API key entry**: typing 40–160 characters by hand is painful. Check this first. | Ask on the RS Plugin Discord / API Council |
+| Q14 | Can players paste (Ctrl+V) into a `ui.InputField`? Does a paste fire `Event.KeyTyped` for other plugins? | **API key entry**: typing 40–160 characters by hand is painful. Check this first. | Ask on the RS Plugin Discord / API Council |
 | Q15 | Which containers scroll (`ComponentCollection.scrollable`)? Can a GroupBox be dragged with `ONDRAG` and `Mouse.GetPosition()`? | Chat log, moving the popup | Message pager; position presets |
 | Q16 | Which modifier and key combinations are free of game keybinds? Key events can't be consumed. | Hotkey | Launcher button only |
 | Q17 | Does `ui.Text` render `<col=…>` tags like chat does? | Coloured words inside one message | One Text component per colour |
