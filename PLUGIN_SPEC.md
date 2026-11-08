@@ -10,7 +10,7 @@
 > It does **not** allow feeding in other developers' plugins, so this spec
 > deliberately never looks at any third-party plugin code.
 
-**Contents:** 0 Assumptions · 1 Goals · 2 Jagex rules · 3 Architecture · 4 Manifest · 5 UI · 6 Module-by-module port · 7 Data model · 8 AI integration · 9 Privacy · 10 Endpoints · 11 Testing · 12 Submission checklist · 13 Milestones · 14 Open questions · A Desktop migration · B Docs used
+**Contents:** 0 Assumptions · 1 Goals · 2 Jagex rules · 3 Architecture · 4 Manifest · 5 UI · 6 Module-by-module port · 7 Data model · 8 AI integration · 9 Privacy · 10 Endpoints · 11 Testing · 12 Submission checklist · 13 Milestones · 14 Open questions · A Legacy app & RuneMetrics · B Docs used
 
 ---
 
@@ -21,7 +21,7 @@
 | A1 | `httpAccess` to the Gemini and OpenAI APIs is assumed to be approvable. | Confirm with the Plugin Moderator at submission time. |
 | A2 | The plugin is a **rewrite**, not a translation of `app.py`. | Jagex rejects "code output from language transcoding processes". |
 | A3 | All code is hand-reviewed by the repo owner before submission. | Required by the AI Policy ("AI-assisted code is acceptable provided you personally review and understand it"). |
-| A4 | The desktop app keeps working alongside the plugin. | It still needs moving off RuneMetrics (see Appendix A). |
+| A4 | The plugin is the product. The desktop app is **legacy**: kept in the repo as a reference for the port, not maintained. | Owner decision (review, 2026-11-08). It stops loading live stats when RuneMetrics shuts down on 10 Nov 2026. Appendix A records the fix in case it's ever wanted. |
 | A5 | Bring-your-own-key: each player enters their own Gemini or OpenAI key. | The plugin has no server of its own. |
 
 ---
@@ -69,7 +69,7 @@
 
 ### 3.1 Folder layout
 
-The repo keeps the desktop app at the root. The plugin lives in its own folder, and **only** `plugin/rs-helper/` is zipped for mod.io.
+The repo keeps the legacy desktop app at the root as a reference (A4). The plugin lives in its own folder, and **only** `plugin/rs-helper/` is zipped for mod.io.
 
 ```
 plugin/
@@ -639,7 +639,9 @@ Shipping 0.1 first gets a plugin through moderation once, cheaply, before adding
 
 ---
 
-## Appendix A — Desktop app: move off RuneMetrics (deadline 2026-11-10)
+## Appendix A — Legacy desktop app: RuneMetrics shutdown (optional)
+
+**Not planned work.** The desktop app is legacy (A4). This appendix only records what would fix it, in case it's ever revived. The same Platform API endpoints are what the plugin's `web/advlog.lua` uses (§10).
 
 Jagex: "All endpoints under `apps.runescape.com/runemetrics/...` are going offline on the 10th November 2026." `fetch_runemetrics_profile` (`app.py` 323–399) uses two of them. The replacements below were tested on 2026-11-08 with the account `rozraid`: all returned HTTP 200.
 
