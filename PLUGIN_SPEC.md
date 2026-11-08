@@ -18,11 +18,11 @@
 
 | # | Decision | Notes |
 |---|----------|-------|
-| A1 | `httpAccess` to the Gemini and OpenAI APIs is assumed to be approvable. | Confirm with the Plugin Moderator at submission time. |
+| A1 | `httpAccess` to the Claude (Anthropic), Gemini and OpenAI APIs is assumed to be approvable. | Confirm with the Plugin Moderator at submission time. |
 | A2 | The plugin is a **rewrite**, not a translation of `app.py`. | Jagex rejects "code output from language transcoding processes". |
 | A3 | All code is hand-reviewed by the repo owner before submission. | Required by the AI Policy ("AI-assisted code is acceptable provided you personally review and understand it"). |
 | A4 | The plugin is the product. The desktop app is **legacy**: kept in the repo as a reference for the port, not maintained. | Owner decision (review, 2026-11-08). It stops loading live stats when RuneMetrics shuts down on 10 Nov 2026. Appendix A records the fix in case it's ever wanted. |
-| A5 | Bring-your-own-key: each player enters their own Gemini or OpenAI key. | The plugin has no server of its own. |
+| A5 | Bring-your-own-key: each player enters their own Claude (Anthropic), Gemini or OpenAI key. | The plugin has no server of its own. Claude added per owner review (2026-11-08). |
 
 ---
 
@@ -57,7 +57,7 @@
 | Subject to review: "Containing custom resources like images or sounds." | Guidelines | v1 ships no custom images or sounds and uses built-in game sprites only. |
 | "Plugin code which is unnecessarily difficult to follow will result in rejection … transcoding … unvetted AI generation." | Guidelines → AI Policy | Small files, one job each, comments on every function, no clever tricks. The owner reviews every line. |
 | "Specifying malformed URLs or URL shortener/redirect addresses will cause your plugin to be rejected." | HTTPRequest | Exact HTTPS base URLs only (§4). |
-| Data sent outside the UK/EEA (e.g. USA) is "Case 3". | Submission process, UK adequacy | Gemini and OpenAI are US services, so: privacy notice, public contact email, and Jagex's adequacy form (§9). |
+| Data sent outside the UK/EEA (e.g. USA) is "Case 3". | Submission process, UK adequacy | Anthropic, Google and OpenAI are US services, so: privacy notice, public contact email, and Jagex's adequacy form (§9). |
 | "Plugins should support all of the major platforms … Windows, Linux, and Mac." | Submission process | No OS-specific code or paths. |
 | "If you want to include lots of logging then it should be toggleable, and off by default." | Good practice | A `debug` switch in Settings, off by default. |
 | Localisation: "Store all of your different text strings in a table structure in separate files for each language." | Good practice | All UI text lives in `lang/en.lua` from day one. |
@@ -94,7 +94,7 @@ plugin/
     web/ge.lua                  GE prices
     ai/system_prompt.lua        the advisor's base instructions (readable by moderators)
     ai/context.lua              builds the context block (§8.2)
-    ai/providers.lua            Gemini / OpenAI request and response mapping
+    ai/providers.lua            Claude / Gemini / OpenAI request and response mapping
     ai/chat.lua                 conversation state, send/cancel, session memory
     ui/window.lua               popup shell: header, Chat | Explorer split, tab bar
     ui/chat_view.lua            chat pane
@@ -110,7 +110,7 @@ Rules: one job per file, under ~300 lines each, a header comment explaining the 
 
 ```
  game client ──(Player, config.Quest, Inventory, events)──► game/*  ─┐
-                                                                    ├─► ai/context ─► ai/providers ─► Gemini/OpenAI
+                                                                    ├─► ai/context ─► ai/providers ─► Claude/Gemini/OpenAI
  runescape.wiki / Adventurer's Log / GE ──(HTTPRequest)──► web/* ───┤                     │
                                                                     │                     ▼
  PersistentDB ◄──► lib/store ◄──► To-Do, favourites, items, memory ─┘           lib/textfmt ─► ui/chat_view
@@ -150,6 +150,7 @@ Rules: one job per file, under ~300 lines each, a header comment explaining the 
         "wiki":   "https://runescape.wiki/",
         "advlog": "https://secure.runescape.com/m=adventurers-log/",
         "ge":     "https://api.weirdgloop.org/",
+        "claude": "https://api.anthropic.com/",
         "gemini": "https://generativelanguage.googleapis.com/",
         "openai": "https://api.openai.com/"
     },
@@ -226,7 +227,7 @@ Jagex: "Since plugins can't create new interfaces, they must instead use compone
 | Input | `ui.InputField`, `Setup(VISIBLE, NONE, 1000)`, `inputMode = CHAT`, `emptyText = "Ask the advisor…"` | Enter submits (`ONCONTENTCHANGED` with reason `SUBMIT`). Escape doesn't send (`SUBMIT_ON_ESCAPE` is ignored). |
 | Send / Stop | `ui.Button` | Send is disabled while a request is running. Stop calls `HTTPRequest:Cancel()`. |
 | States | `ui.Text` in the log | "Thinking…" with a counter in seconds (updated on `ServerLogic`), plus errors in plain words: "Your API key was rejected", "Out of credit or rate-limited, try again in a minute", "No response after 60 s". |
-| Locked states | Overlay text plus a button | No `httpAccess` → "Allow web access in Plugin Hub to use the advisor". No key → "Add a Gemini or OpenAI key" (opens ⚙). No consent yet → the one-time data notice (§9). |
+| Locked states | Overlay text plus a button | No `httpAccess` → "Allow web access in Plugin Hub to use the advisor". No key → "Add a Claude, Gemini or OpenAI key" (opens ⚙). No consent yet → the one-time data notice (§9). |
 
 ### 5.4 Explorer tabs
 
@@ -238,7 +239,7 @@ Jagex: "Since plugins can't create new interfaces, they must instead use compone
 | **Items** | 5 categories × catalog items, each with an item icon, a tick, and a "Seen in bank 3 Nov" note. Progress "17 / 35". | `ui.Check` + `ui.Sprite:SetAssociatedObject(objectID)` (item icon by object ID) |
 | **To-Do** | Add row (text, priority, category), filters, and task rows: tick, text, Ask, Edit, Delete (Delete asks to confirm). Suggest my next goals. | `ui.InputField`, `ui.List` dropdowns, `ui.Check`, `ui.Button` |
 | **Wiki** | Search box → result list → reader (title, intro text, Ask about this, related-link chips). Quick links. A Prices box: item name(s) → price and daily volume. | `ui.InputField`, `ui.List`, `ui.Text`, `ui.Button` |
-| **⚙ Settings** | Provider (Gemini / OpenAI), model ID, key status (`set ••••abcd` / not set) with Enter key and Forget key, custom instructions (2,000 characters), answer length, hotkey, debug logging, Forget memory, Delete all my data (confirmation). | `ui.RadioGroup`, `ui.InputField`, `ui.Slider`, `ui.Check`, `ui.Button` |
+| **⚙ Settings** | Provider (Claude / Gemini / OpenAI), model ID, Claude effort (low / medium / high), key status (`set ••••abcd` / not set) with Enter key and Forget key, custom instructions (2,000 characters), answer length, hotkey, debug logging, Forget memory, Delete all my data (confirmation). | `ui.RadioGroup`, `ui.InputField`, `ui.Slider`, `ui.Check`, `ui.Button` |
 
 ### 5.5 Text, images and colour
 
@@ -391,12 +392,12 @@ Each subsection gives: **From** (the `app.py` code), **To** (the plugin file), *
 - **Changes:** the base prompt is fixed in code, so a moderator can read exactly what the advisor is told, and it includes the guideline guardrails (§8.4). Players can only *append* custom instructions. The character name is no longer inserted into the prompt.
 
 ### 6.13 LLM providers
-- **From:** Gemini and OpenAI SDK calls (1572–1624).
+- **From:** Gemini and OpenAI SDK calls (1572–1624). Claude is a new third provider (A5).
 - **To:** `ai/providers.lua` (§8.1).
 - **Changes:**
   - Raw HTTPS instead of SDKs.
   - Retries on HTTP 503 and 429: up to 2, at 2 s and then 5 s, using `lib/timer` (no `sleep` is available).
-  - The default provider is whichever key is present (the app defaulted to Gemini even when only an OpenAI key was set).
+  - The default provider is whichever key is present; with several keys, the player picks in Settings (the app defaulted to Gemini even when only an OpenAI key was set).
   - The last 6 turns of history are sent (the app sent none).
 
 ### 6.14 Session memory and logs
@@ -431,8 +432,8 @@ PersistentDB stores values per plugin, and they persist across game sessions. Ja
 
 | Key | Type | Contents | Replaces (app) |
 |---|---|---|---|
-| `settings` | StructuredData | `{ provider = "gemini"\|"openai", geminiModel = "gemini-3.6-flash", openaiModel = "gpt-4o", temperature = 0.4, maxAnswerWords = 250, debug = false, hotkey = "ctrl+shift+h", window = { size = "M", x = .., y = .. }, aiConsent = false }` | `settings.json` (global parts) |
-| `keys` | StructuredData | `{ gemini = "", openai = "" }` | `gemini_api_key`, `openai_api_key` |
+| `settings` | StructuredData | `{ provider = "claude"\|"gemini"\|"openai", claudeModel = "claude-opus-5-5", claudeEffort = "medium", geminiModel = "gemini-3.6-flash", openaiModel = "gpt-4o", temperature = 0.4 (Gemini/OpenAI only), maxAnswerWords = 250, debug = false, hotkey = "ctrl+shift+h", window = { size = "M", x = .., y = .. }, aiConsent = false }` | `settings.json` (global parts) |
+| `keys` | StructuredData | `{ claude = "", gemini = "", openai = "" }` | `gemini_api_key`, `openai_api_key` (Claude is new) |
 | `<char>.todo` | StructuredData | `{ nextId = 7, items = { { id = 6, text = "...", done = false, priority = "high"\|"med"\|"low", category = "quest"\|"skill"\|"boss"\|"other" } } }` | `todo_tasks` |
 | `<char>.favBosses` | StructuredData | `{ "Giant Mole", ... }` | `favorite_bosses` |
 | `<char>.ownedItems` | StructuredData | `{ slayer_helm_1 = true, ... }` (manual ticks only, see §6.8) | `owned_items` |
@@ -452,18 +453,38 @@ Fixes carried in from the app's bugs: per-character data (the app stored everyth
 
 ### 8.1 Transport
 
-Both providers are called with `HTTPRequest:Post`. The Jagex HTTP API has no streaming, so the whole answer arrives in one go. While waiting, show a "Thinking…" line with a **Stop** button (`HTTPRequest:Cancel()`).
+All three providers are called with `HTTPRequest:Post`. The Jagex HTTP API has no streaming, so the whole answer arrives in one go. While waiting, show a "Thinking…" line with a **Stop** button (`HTTPRequest:Cancel()`).
 
-| | Gemini | OpenAI |
+| | Claude (Anthropic) | Gemini | OpenAI |
+|---|---|---|---|
+| Manifest base URL | `claude = "https://api.anthropic.com/"` | `gemini = "https://generativelanguage.googleapis.com/"` | `openai = "https://api.openai.com/"` |
+| Path | `v1/messages` | `v1beta/models/<model>:generateContent` | `v1/chat/completions` |
+| Headers (`AddHeader`) | `Content-Type: application/json`, `x-api-key: <key>`, `anthropic-version: 2026-10-21`, `anthropic-beta: server-side-fallback-2026-07-01` | `Content-Type: application/json`, `x-goog-api-key: <key>` | `Content-Type: application/json`, `Authorization: Bearer <key>` |
+| Body | `{ model = M, max_tokens = 16000, system = SYS, messages = { {role="user",content=...}, {role="assistant",content=...}, ... }, output_config = { effort = "medium" }, fallbacks = "default", cache_control = { type = "ephemeral" } }` | `{ systemInstruction = { parts = {{ text = SYS }} }, contents = { {role="user",parts={{text=...}}}, {role="model",...}, ... }, generationConfig = { temperature = 0.4, maxOutputTokens = 800 } }` | `{ model = M, temperature = 0.4, max_completion_tokens = 800, messages = { {role="system",content=SYS}, {role="user",...}, {role="assistant",...}, ... } }` |
+| Answer | Join every `content[*]` block with `type == "text"`; skip `thinking` and `fallback` blocks | `candidates[1].content.parts[*].text` | `choices[1].message.content` |
+| Errors | non-200 → `error.type` + `error.message` from the body (table below) | non-200 → show `error.message` from the body | same |
+
+Default model IDs: Claude uses `claude-opus-5-5`; Gemini and OpenAI are copied from the app (`gemini-3.6-flash`, `gpt-4o`). All can be changed in Settings, because model names change faster than plugin releases.
+
+**Claude specifics** (Anthropic Messages API, `anthropic-version: 2026-10-21`)
+- **Don't send `temperature`** (or `top_p` / `top_k`). On this API version every model rejects them with HTTP 400, so the `temperature` setting applies to Gemini and OpenAI only.
+- **Don't send `thinking`.** Claude Opus 5.5 always thinks adaptively. Depth is set with `output_config.effort`: `medium` by default (sent explicitly), with `low` (fastest) and `high` in Settings.
+- **`max_tokens = 16000`.** It caps thinking *and* answer together, so a small value cuts answers off. Answer length is controlled by the prompt (~250 words, §8.4). If `stop_reason == "max_tokens"`, show "The answer was cut off. Ask for a shorter answer."
+- **Refusals:** `fallbacks = "default"` with the `server-side-fallback-2026-07-01` beta header lets the API retry a declined request on a suitable fallback model inside the same call. If `stop_reason == "refusal"` anyway, show "Claude declined this question. Try rephrasing it as planning advice." and don't retry.
+- **History is plain text.** Earlier turns are sent as `{role, content = "<text>"}` only. Thinking blocks are never stored or sent back, and the system prompt never changes between requests. That keeps the plugin clear of the API's history-editing check on replayed thinking blocks, and the sliding window of the last 6 turns (§8.2) can drop old turns freely.
+- **Caching:** top-level `cache_control = { type = "ephemeral" }` caches the fixed system prompt and earlier turns between questions, which makes follow-ups cheaper and faster.
+- **Retries:** HTTP 429, 500 and 529 retry like the others (§6.13), waiting at least the `retry-after` header when present.
+
+| Status | `error.type` | Message shown |
 |---|---|---|
-| Manifest base URL | `gemini = "https://generativelanguage.googleapis.com/"` | `openai = "https://api.openai.com/"` |
-| Path | `v1beta/models/<model>:generateContent` | `v1/chat/completions` |
-| Headers (`AddHeader`) | `Content-Type: application/json`, `x-goog-api-key: <key>` | `Content-Type: application/json`, `Authorization: Bearer <key>` |
-| Body | `{ systemInstruction = { parts = {{ text = SYS }} }, contents = { {role="user",parts={{text=...}}}, {role="model",...}, ... }, generationConfig = { temperature = 0.4, maxOutputTokens = 800 } }` | `{ model = M, temperature = 0.4, max_completion_tokens = 800, messages = { {role="system",content=SYS}, {role="user",...}, {role="assistant",...}, ... } }` |
-| Answer | `candidates[1].content.parts[*].text` | `choices[1].message.content` |
-| Errors | non-200 → show `error.message` from the body | same |
-
-Default model IDs are copied from the app (`gemini-3.6-flash`, `gpt-4o`) and can be changed in Settings, because model names change faster than plugin releases.
+| 400 | `invalid_request_error` | "Request rejected: <message>" (a plugin bug; logged when debug is on) |
+| 401 | `authentication_error` | "Your Claude API key was rejected. Check it in Settings." |
+| 402 | `billing_error` | "Your Anthropic account has a billing problem." |
+| 403 | `permission_error` | "This API key can't use that model." |
+| 404 | `not_found_error` | "Model not found. Check the model ID in Settings." |
+| 413 | `request_too_large` | "Question plus context is too long." (shouldn't happen at ~6 KB) |
+| 429 | `rate_limit_error` | "Rate-limited. Retrying in N s…" |
+| 500 / 529 | `api_error` / `overloaded_error` | "Claude is busy. Retrying…", then "Try again in a minute." |
 
 **JSON.** The Jagex docs don't document any JSON library. The plugin ships its own small `lib/json.lua` (encode and decode, about 200 lines), written from scratch for this plugin and heavily commented. Don't paste in someone else's JSON library: its licence would have to allow uploading to AI tools, and it adds code a moderator has to review.
 
@@ -479,6 +500,8 @@ The order follows the app's context assembly (`app.py` 1535–1570), trimmed to 
 6. **Wiki extract** (≤ 1,500 chars) for the page the user has open in the Explorer, or for the best wiki search hit on the question (§6.6). This replaces the app's 6-keyword match.
 7. **GE prices**, only for items the user has pinned or asked about by exact name (§6.9).
 8. **Conversation history**: the last 6 turns of this session. The app sent none, so every question started from scratch. This is a deliberate improvement.
+
+**Where it goes:** for every provider, this context is attached to the **latest user message** (as the app did: `User Request: … Context: …`). Earlier turns keep only the player's question and the answer text. The system prompt stays fixed.
 
 Dropped: the 3,000-URL "wiki links source block" (most of it was punctuation-only titles) and the raw profile text dump.
 
@@ -510,16 +533,16 @@ When the window closes, or after 30 minutes idle, save a ≤ 300-character summa
 
 | Data | Where it goes | Why |
 |---|---|---|
-| Skill levels, QP, quest status, To-Do text, favourite bosses, owned items, question text, chat history (this session) | Gemini **or** OpenAI (whichever the player picks), USA | To answer the question |
+| Skill levels, QP, quest status, To-Do text, favourite bosses, owned items, question text, chat history (this session) | Claude (Anthropic), Gemini (Google) **or** OpenAI, whichever the player picks; all USA | To answer the question |
 | Character display name | Jagex Adventurer's Log API (`secure.runescape.com`, UK) | To fetch the player's **own** recent events and quest eligibility |
 | Search words and page titles | RuneScape Wiki API (`runescape.wiki`) | Wiki search, extracts, citation check |
 | Item names | Weird Gloop GE API (`api.weirdgloop.org`) | GE prices |
 | API keys | Stay on the device (PersistentDB), and are sent only to their own provider | Authentication |
 
 - **Never sent anywhere:** chat messages from the game, other players' names or data, location, inventory contents beyond the major-items ticks.
-- **Data protection case:** Case 3 (USA, no UK adequacy). Required: endpoints, security measures (HTTPS; keys held only on the device), a privacy notice (the ICO generator is fine), a public contact email (§12), and Jagex's adequacy exception form (password `RS3API`), which collects the developer's name, country and a data-protection email.
+- **Data protection case:** Case 3 (USA, no UK adequacy). Anthropic offers no EU or UK processing: its `inference_geo` setting only chooses `"global"` (the default) or `"us"`, so it doesn't change the case. Required: endpoints, security measures (HTTPS; keys held only on the device), a privacy notice (the ICO generator is fine), a public contact email (§12), and Jagex's adequacy exception form (password `RS3API`), which collects the developer's name, country and a data-protection email.
 - **Offline mode:** without `httpAccess`, nothing leaves the device (Case 1 behaviour). Say this in the listing.
-- **Before the first AI request:** show a one-time notice: "Your question and a summary of your stats will be sent to Google/OpenAI using your own API key." Store `aiConsent = true` in `settings`.
+- **Before the first AI request:** show a one-time notice: "Your question and a summary of your stats will be sent to <Anthropic / Google / OpenAI> using your own API key." Store `aiConsent = true` in `settings`.
 
 ---
 
@@ -530,6 +553,7 @@ When the window closes, or after 30 minutes idle, save a ≤ 300-character summa
 | `wiki` | `https://runescape.wiki/` | `api.php?action=query&list=search…`, `…&prop=extracts&exintro=1&explaintext=1&redirects=1&titles=…`, `…&titles=A\|B` (existence), `…&list=categorymembers&cmtitle=Category:Quests\|Bosses\|Slayer_assignments&cmlimit=500&cmcontinue=…` |
 | `advlog` | `https://secure.runescape.com/m=adventurers-log/` | `api/v1/playerEvents/<own name>`, `api/v1/playerData/<own name>?includeQuests=true` |
 | `ge` | `https://api.weirdgloop.org/` | `exchange/history/rs/latest?name=A\|B` (the app's current source; the client API has no prices) |
+| `claude` | `https://api.anthropic.com/` | `v1/messages` |
 | `gemini` | `https://generativelanguage.googleapis.com/` | `v1beta/models/<model>:generateContent` |
 | `openai` | `https://api.openai.com/` | `v1/chat/completions` |
 
@@ -560,7 +584,7 @@ When the window closes, or after 30 minutes idle, save a ≤ 300-character summa
 1. Fresh install, no permission: every Explorer tab works, and Chat shows the "grant permission / add key" state.
 2. Login, logout, world hop, and a second character on the same device: data stays separate per character.
 3. Quest filters match the in-game quest list for the imported save (spot-check 10 quests).
-4. Network errors: wrong API key (401), no credit (429), timeout, wiki down. Each shows a clear message and never freezes the window.
+4. Network errors: wrong API key (401), no credit (402/429), timeout, wiki down. For Claude, also a forced `max_tokens` cut-off and a refusal. Each shows a clear message and never freezes the window.
 5. Cancel an AI request mid-flight.
 6. Long answers: wrapping, scrolling, the 250-word guidance, citations with and without ⚠.
 7. Crash safety: change a To-Do, force-close the client, and check it's still there.
@@ -594,7 +618,7 @@ From Jagex's "Submission process" and "Example description" pages.
 
 **After uploading**
 - [ ] Fill in Jagex's adequacy exception form (data sent to the USA).
-- [ ] Ask the moderator to confirm `httpAccess` to the Gemini and OpenAI hosts (assumption A1).
+- [ ] Ask the moderator to confirm `httpAccess` to the Anthropic, Gemini and OpenAI hosts (assumption A1).
 - [ ] During the moderation **code freeze**, make no mod.io edits.
 
 **Licence note.** Under the Jagex EULA, submitting grants Jagex a royalty-free, perpetual, irrevocable licence to the plugin. A plugin can be treated as abandoned after 60 days without needed maintenance.
@@ -609,7 +633,7 @@ Each milestone is small enough to review by hand and to moderate.
 |---|---|---|---|
 | **0.1 "Explorer"** | Window shell, Profile, Quests (from the client), To-Do, Items (manual ticks), Bosses (preparation), Settings. No network. | none | Low ("planning tools … using player-known data" are listed as Allowed) |
 | **0.2 "Wiki"** | Wiki search and reader, category lists, GE prices, Adventurer's Log events and quest eligibility | `httpAccess` (wiki, advlog, ge) | Medium (any permission is "subject to review") |
-| **0.3 "Advisor"** | AI chat (Gemini/OpenAI), context builder, citation check, session memory, prompt templates | `httpAccess` (+ gemini, openai) | Higher ("interpreted or actionable gameplay recommendations"), Case 3 data protection |
+| **0.3 "Advisor"** | AI chat (Claude/Gemini/OpenAI), context builder, citation check, session memory, prompt templates | `httpAccess` (+ claude, gemini, openai) | Higher ("interpreted or actionable gameplay recommendations"), Case 3 data protection |
 
 Shipping 0.1 first gets a plugin through moderation once, cheaply, before adding the parts that get the most scrutiny.
 
