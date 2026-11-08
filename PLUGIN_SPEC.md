@@ -10,7 +10,7 @@
 > It does **not** allow feeding in other developers' plugins, so this spec
 > deliberately never looks at any third-party plugin code.
 
-**Contents:** 0 Assumptions · 1 Goals · 2 Jagex rules · 3 Architecture · 4 Manifest · 5 UI · 6 Module-by-module port · 7 Data model · 8 AI integration · 9 Privacy · 10 Endpoints · 11 Testing · 12 Submission checklist · 13 Milestones · 14 Open questions · A Legacy app & RuneMetrics · B Docs used
+**Contents:** 0 Assumptions · 1 Goals · 2 Jagex rules · 3 Architecture · 4 Manifest · 5 UI · 6 Module-by-module port · 7 Data model · 8 AI integration · 9 Privacy · 10 Endpoints · 11 Testing (beta world, harness) · 12 Submission checklist · 13 Milestones · 14 Open questions · A Legacy app & RuneMetrics · B Docs used
 
 ---
 
@@ -100,6 +100,7 @@ plugin/
     ui/chat_view.lua            chat pane
     ui/explorer/*.lua           profile, quests, bosses, items, todo, wiki, settings
     ui/widgets.lua              shared rows, chips, badges
+  tests/                        out-of-game tests with fake Jagex APIs (never zipped, §11.3)
   tools/                        dev-only helpers (never zipped)
   README-dev.md                 how to run in the beta world (never zipped)
 ```
@@ -159,7 +160,7 @@ Rules: one job per file, under ~300 lines each, a header comment explaining the 
 }
 ```
 
-- `httpAccess` is **optional**: Jagex recommends that "unless your plugin won't work at all without a specific permission". The plugin checks `Plugin.HasPermission(PluginPermissions.httpAccess)` before any network feature.
+- `httpAccess` is **optional**: Jagex recommends that "unless your plugin won't work at all without a specific permission". The plugin checks `Plugin.HasPermission(PluginPermissions.httpAccess)` before any network feature. Until web access is allowed, the data notice is accepted and a key is saved, the chat pane is **replaced by the Set up the advisor panel** (§5.3). The Explorer works regardless. (Owner review, 2026-11-08.)
 - `chatAccess` and `trackingAccess` are **not** requested. Nothing needs them, and every permission adds review.
 - v0.1 ships with no `urls` and no permissions at all (§13). Each URL is added in the milestone that first uses it.
 
@@ -186,31 +187,39 @@ Jagex: "Since plugins can't create new interfaces, they must instead use compone
 - Default size: 46% × 62% of the game window, clamped to at least 560 × 380 units. Placed at the right-centre. Uses `SetSize(w, h, pctW, pctH)` and `SetPos(x, y, parentPct, selfPct)` so it follows client resizes. Also listen to `Event.WindowSizeChanged`.
 - **Size presets** (Small / Medium / Large) in the header menu. Jagex documents no resize handle.
 - **Moving:** drag the header. The pieces are `dragConfig`, `ONDRAG` / `ONDRAGCOMPLETE` and `Mouse.GetPosition()`, but Jagex documents no full window-drag pattern (§14 Q15). Fallback: a **Position** preset (left / centre / right). The position is saved in `settings`.
-- **Compact mode** (for small screens or the Small preset): one pane at a time, with a **Chat | Explorer** switch.
+- **Small screens** (or the Small preset): opening one pane collapses the other automatically, using the collapse controls in §5.2.
 
 ### 5.2 Layout
 
 ```
-┌─ RS Helper ─────────────────────────────── [Size ▾] [Compact] [X] ┐
-│ CHAT                               │ EXPLORER                      │
-│ ┌────────────────────────────────┐ │ Profile Quests Bosses Items   │
-│ │ You  How do I unlock Rigour?   │ │ To-Do  Wiki  ⚙                │
-│ │                                │ │ ┌───────────────────────────┐ │
-│ │ Advisor                        │ │ │                           │ │
-│ │ • You need 74 Dungeoneering... │ │ │   (active tab content)    │ │
-│ │ [Wiki: Rigour] [Wiki: Daemon…] │ │ │                           │ │
-│ │                        ▲ ▼ ⤓   │ │ │                           │ │
-│ └────────────────────────────────┘ │ │                           │ │
-│ [Goal] [Quest] [Boss] [Slayer] [★] │ │                           │ │
-│ ┌──────────────────────────┐[Send] │ │                           │ │
-│ │ Ask the advisor…         │[Stop] │ └───────────────────────────┘ │
-│ └──────────────────────────┘       │ [Ask about this ▸]            │
-├────────────────────────────────────┴───────────────────────────────┤
-│ Gemini · gemini-3.6-flash │ Context: stats, 3 goals, Wiki "Rigour" │
-└─────────────────────────────────────────────────────────────────────┘
+┌─ RS Helper ───────────────────────────────────────── [Size ▾] [X] ┐
+│ ◀ CHAT                              │ EXPLORER ▶                  │
+│ ┌─────────────────────────────────┐ │ Profile Quests Bosses Items │
+│ │ You  How do I unlock Rigour?    │ │ To-Do  Wiki  ⚙              │
+│ │ Advisor                         │ │ ┌─────────────────────────┐ │
+│ │ • Needs 74 Dungeoneering...     │ │ │                         │ │
+│ │ Source: RuneScape Wiki          │ │ │  (active tab content)   │ │
+│ │ [Wiki: Rigour] [Wiki: Daemon…]  │ │ │                         │ │
+│ │                         ▲ ▼ ⤓   │ │ │                         │ │
+│ └─────────────────────────────────┘ │ │                         │ │
+│ Quick actions ▾                     │ │                         │ │
+│ [Goal] [Quest] [Boss] [Slayer] [★]  │ │                         │ │
+│ ┌───────────────────────────┐[Send] │ └─────────────────────────┘ │
+│ │ Ask the advisor…          │[Stop] │ [Ask about this ▸]          │
+│ └───────────────────────────┘       │                             │
+├─────────────────────────────────────┴─────────────────────────────┤
+│ Claude · claude-opus-5-5 │ Context: stats, 3 goals, Wiki "Rigour" │
+└───────────────────────────────────────────────────────────────────┘
 ```
 
-- **Outer structure:** a horizontal `ui.Panel` (`isVertical = false`). Chat takes 55% and Explorer 45%. Nested vertical Panels go inside each.
+**Collapsing** (owner review, 2026-11-08)
+- **Both panes collapse.** ◀ in the Chat header and ▶ in the Explorer header shrink that pane to a narrow strip showing its name and an expand arrow. The other pane **expands to fill** the window: the outer `ui.Panel` recomputes the percentage widths.
+- **Both collapsed** leaves only the header and status bar, so the window can stay on screen out of the way.
+- **Quick actions are part of the chat pane** and collapse on their own: "Quick actions ▾" hides the button row, and the chat log grows into the space.
+- **The setup panel** (§5.3) collapses to a single line: "Advisor not set up · Set up ▸".
+- Every collapse state is saved in `settings.window` (§7), so the window reopens the way the player left it.
+
+- **Outer structure:** a horizontal `ui.Panel` (`isVertical = false`). With both panes open, Chat takes 55% and Explorer 45%. A collapsed pane becomes a fixed strip of about 28 units, and the open pane takes the rest. Nested vertical Panels go inside each.
 - **Explorer tabs:** a `ui.PagedLayer` with one `PagedLayerHeader` (stylesheet `PAGED_LAYER_DEFAULT`). The pages are Profile, Quests, Bosses, Items, To-Do, Wiki, and ⚙ Settings. Jagex: "Components are associated with the currently active page when created", so each tab is built after switching `activePage` to it.
 - **Ask about this ▸** (bottom of the Explorer) sends whatever is selected (a quest, boss, wiki page or To-Do item) to the Chat input using the matching template. This is the main link between the two halves.
 - **Status bar:** provider and model, plus a one-line list of the context that *will* be sent. Clicking it opens **What will be sent**, showing the full context text, for transparency with players and moderators.
@@ -223,11 +232,33 @@ Jagex: "Since plugins can't create new interfaces, they must instead use compone
 | Log fallback | — | If layer scrolling turns out unsupported (§14 Q15): a **pager** showing one exchange at a time, with ◀ Older / Newer ▶ / Latest. |
 | Speaker label | `ui.Text`, coloured | "You" or "Advisor". Colour plus a word, so it isn't colour alone. |
 | Citation chips | `ui.Button` row (`BUTTON_CORNERED_NEUTRAL`) under an answer | One per wiki link: `Wiki: <Title>`, with a `⚠` prefix if the page is missing. A click opens the Explorer's Wiki tab on that page. Above the chips, a source line: **"Source: RuneScape Wiki (CC BY-NC-SA 3.0)"** when at least one cited page exists, or **"No wiki source: treat this as a suggestion"** when none does. |
-| Quick actions | `ui.Button` row | Goal, Quest (opens Quests), Boss (opens Bosses), Slayer (opens the Slayer form), ★ Saved prompts (a `ui.List` dropdown). Each **fills** the input and never sends. |
+| Quick actions | `ui.Button` row inside the chat pane, under a "Quick actions ▾" toggle | Goal, Quest (opens Quests), Boss (opens Bosses), Slayer (opens the Slayer form), ★ Saved prompts (a `ui.List` dropdown). Each **fills** the input and never sends. The row collapses on its own (§5.2). |
 | Input | `ui.InputField`, `Setup(VISIBLE, NONE, 1000)`, `inputMode = CHAT`, `emptyText = "Ask the advisor…"` | Enter submits (`ONCONTENTCHANGED` with reason `SUBMIT`). Escape doesn't send (`SUBMIT_ON_ESCAPE` is ignored). |
 | Send / Stop | `ui.Button` | Send is disabled while a request is running. Stop calls `HTTPRequest:Cancel()`. |
 | States | `ui.Text` in the log | "Thinking…" with a counter in seconds (updated on `ServerLogic`), plus errors in plain words: "Your API key was rejected", "Out of credit or rate-limited, try again in a minute", "No response after 60 s". |
-| Locked states | Overlay text plus a button | No `httpAccess` → "Allow web access in Plugin Hub to use the advisor". No key → "Add a Claude, Gemini or OpenAI key" (opens ⚙). No consent yet → the one-time data notice (§9). |
+| Setup panel | Replaces the **whole chat pane** until setup is complete; collapsible | See "Set up the advisor" below. |
+
+**Set up the advisor** (replaces the chat pane; owner review, 2026-11-08)
+
+```
+│ ◀ SET UP THE ADVISOR             ▾  │
+│ The advisor needs three things.     │
+│ The Explorer works without them.    │
+│                                     │
+│ ✓ 1 Web access    Allowed           │
+│ ○ 2 Data notice   [Read and accept] │
+│ ○ 3 API key       (●) Claude        │
+│                   ( ) Gemini        │
+│                   ( ) OpenAI        │
+│   [Paste your key…        ] [Save]  │
+│   [Check key]                       │
+```
+
+1. **Web access** shows the result of `Plugin.HasPermission(PluginPermissions.httpAccess)`. Jagex documents no Lua call that asks for a permission (only `HasPermission` and the `OptionalPermissionChanged` event), so this step explains where to allow it: "Plugin Hub → Manage → RS Helper → allow Web access". It ticks itself when `Event.OptionalPermissionChanged` reports `httpAccess` enabled (§14 Q18).
+2. **Data notice:** the §9 text, naming the company for the chosen provider (Anthropic, Google or OpenAI). **Accept** stores `aiConsent = true`. Both the data notice and the key step stay greyed out until web access is allowed, because nothing is sent before that.
+3. **API key:** provider choice (`ui.RadioGroup`) and a visible key field (§5.6). **Save** stores the key and shows only `••••` plus its last 4 characters. **Check key** calls the provider's free model-list endpoint, which uses no tokens: Claude `GET v1/models` (headers `x-api-key` and `anthropic-version`), Gemini `GET v1beta/models` (`x-goog-api-key`), OpenAI `GET v1/models` (`Authorization: Bearer`). It reports "Key works" or the error message from §8.1.
+
+When all three are done, the panel closes and the chat pane appears. Settings (⚙) keeps the same three controls for later changes. If permission is revoked later, or the key is forgotten, the panel comes back.
 
 ### 5.4 Explorer tabs
 
@@ -432,7 +463,7 @@ PersistentDB stores values per plugin, and they persist across game sessions. Ja
 
 | Key | Type | Contents | Replaces (app) |
 |---|---|---|---|
-| `settings` | StructuredData | `{ provider = "claude"\|"gemini"\|"openai", claudeModel = "claude-opus-5-5", claudeEffort = "medium", geminiModel = "gemini-3.6-flash", openaiModel = "gpt-4o", temperature = 0.4 (Gemini/OpenAI only), maxAnswerWords = 250, debug = false, hotkey = "ctrl+shift+h", window = { size = "M", x = .., y = .. }, aiConsent = false }` | `settings.json` (global parts) |
+| `settings` | StructuredData | `{ provider = "claude"\|"gemini"\|"openai", claudeModel = "claude-opus-5-5", claudeEffort = "medium", geminiModel = "gemini-3.6-flash", openaiModel = "gpt-4o", temperature = 0.4 (Gemini/OpenAI only), maxAnswerWords = 250, debug = false, hotkey = "ctrl+shift+h", window = { size = "M", x = .., y = .., chatCollapsed = false, explorerCollapsed = false, quickActionsCollapsed = false, setupCollapsed = false }, aiConsent = false }` | `settings.json` (global parts) |
 | `keys` | StructuredData | `{ claude = "", gemini = "", openai = "" }` | `gemini_api_key`, `openai_api_key` (Claude is new) |
 | `<char>.todo` | StructuredData | `{ nextId = 7, items = { { id = 6, text = "...", done = false, priority = "high"\|"med"\|"low", category = "quest"\|"skill"\|"boss"\|"other" } } }` | `todo_tasks` |
 | `<char>.favBosses` | StructuredData | `{ "Giant Mole", ... }` | `favorite_bosses` |
@@ -569,11 +600,50 @@ When the window closes, or after 30 minutes idle, save a ≤ 300-character summa
 
 ## 11. Development and testing
 
-**Setup** (from Jagex's "Accessing the API" tutorial)
+### 11.1 Where testing can happen
+
+Jagex offers **no lite client** and **no developer options on a live account**. Unmoderated plugins only run in the **plugin beta world**, Jagex's developer environment. There are three places to test, each covering different things:
+
+| Where | What it is | What it can test | Limits |
+|---|---|---|---|
+| **Your PC, outside the game** | A standard Lua 5.4 interpreter running `plugin/tests/` with small fake versions of the Jagex APIs (§11.3) | JSON, text formatting, the context builder, provider request and response mapping, error messages, storage rules, To-Do logic. The real wiki, Adventurer's Log and AI endpoints can be called with the same request shapes from a desktop script. | No UI and no game data. The fakes must follow Jagex's documented signatures. |
+| **Plugin beta world** | A separate beta client and world, reached through the launcher link in Jagex's tutorial. **Import save** copies your live character in (once per hour). Plugins in `dev_plugins/` run there, and the console and cheats work. | Everything in-game: the UI, events, live stats, quests, items, permissions (granted with `ppe`), HTTP calls, crash safety. | Progress never transfers back to live. No Grand Exchange. Cheats are logged, and abusing them can get the account banned. PersistentDB data isn't shared with the live client. The console doesn't exist on mobile. |
+| **Live game** | Only after Jagex approves the plugin, installed from the Plugin Hub | The real Plugin Hub install and permission prompt, and real players' setups | No cheats, no dev plugins. Every new version goes through moderation again. |
+
+### 11.2 Beta world setup
+
+From Jagex's "Accessing the API" tutorial:
 1. Join the plugin beta world through the launcher link on the tutorial page. In the lobby, use **Import save** (allowed once per hour).
 2. Put `plugin/rs-helper/` inside `<beta root>/dev_plugins/` (default `C:\ProgramData\Jagex\RuneScape-BETA\dev_plugins\`; Mac and Linux paths are on the tutorial page). A symlink or copy script in `plugin/tools/` keeps the repo as the source of truth.
 3. Open the console with `ALT` + `` ` ``, then use `prf`, `plist`, `pon rs-helper`, and `prl rs-helper` after each edit.
 4. Grant the optional permission with `ppe rs-helper httpAccess`, and test both with and without it (`ppd rs-helper httpAccess`).
+5. To go back to live worlds, close both the game and the launcher, then relaunch normally.
+
+### 11.3 Out-of-game test harness
+
+- `plugin/tests/fake_api.lua` stands in for `Player`, `config.Quest`, `Inventory`, `HTTPRequest`, `PersistentDB`, `Event` and `Plugin`, with the same names and arguments as Jagex's docs. Each fake returns scripted data (e.g. a character with 85 Magic and 241 completed quests).
+- `plugin/tests/run.lua` runs every `*_test.lua` file with plain `assert`s. There's no third-party test library to install or review.
+- Run it with `lua5.4 plugin/tests/run.lua`, and in GitHub Actions on every push (`apt-get install lua5.4`).
+- It covers most of the logic without opening the game. The beta world is then only needed for the UI and real game data.
+
+### 11.4 What the beta world can't show
+
+- **Adventurer's Log and Hiscores return your *live* character**, not the beta copy. After `!allinone` or `!setvar`, the client and the Adventurer's Log disagree. Test the quest-eligibility merge (§6.4) on a fresh **Import save** with no quest cheats.
+- **Grand Exchange:** the beta is cut off from the GE. Price lookups still work, because they come from Weird Gloop's live data, and the plugin doesn't use GE offers.
+- **Plugin Hub install and the live permission prompt:** in the beta, permissions are granted from the console. Jagex says the in-game plugin controls are "still in development", so check the setup panel's web-access step again after approval.
+- **Mobile:** dev plugins can't be loaded there (no console). Test the mobile code paths (no hotkey, no mouse position) with the fakes, then check on a phone after approval.
+
+### 11.5 Testing it all in one go
+
+Almost everything for a milestone can be tested in **one beta session of about 45 minutes**, in this order:
+1. Import save, enable the plugin with **no** permission: every Explorer tab works, and the setup panel shows step 1.
+2. `ppe rs-helper httpAccess`: step 1 ticks itself. Accept the notice, save a key, then **Check key**.
+3. Ask the test questions in test case 9 and the citation cases. AI calls use your own key and cost a little credit.
+4. Work through the cheats table below.
+5. Collapse and expand both panes and the quick actions, then reload (`prl`): the layout comes back as it was.
+6. Crash test, then a second character, then `!resetsave` and re-import to finish.
+
+The out-of-game tests (§11.3) run before every session, and the live-only checks (§11.4) wait for approval.
 
 **Cheats for each feature** (beta only; Jagex logs cheat use)
 
@@ -585,15 +655,17 @@ When the window closes, or after 30 minutes idle, save a ≤ 300-character summa
 | Combat badges | `!skillsetlevel` on the combat skills, then check the Bosses tab. |
 
 **Test cases** (each must pass before a milestone ships)
-1. Fresh install, no permission: every Explorer tab works, and Chat shows the "grant permission / add key" state.
+1. Fresh install, no permission: every Explorer tab works, and the setup panel replaces the chat pane at step 1.
 2. Login, logout, world hop, and a second character on the same device: data stays separate per character.
 3. Quest filters match the in-game quest list for the imported save (spot-check 10 quests).
 4. Network errors: wrong API key (401), no credit (402/429), timeout, wiki down. For Claude, also a forced `max_tokens` cut-off and a refusal. Each shows a clear message and never freezes the window.
 5. Cancel an AI request mid-flight.
-6. Long answers: wrapping, scrolling, the 250-word guidance, citations with and without ⚠.
+6. Long answers: wrapping, scrolling, the 250-word guidance, citations with and without ⚠, and the source line.
 7. Crash safety: change a To-Do, force-close the client, and check it's still there.
 8. Windows, Mac and Linux (Bolt) clients.
 9. Guardrails: ask "what prayer do I switch to on phase 3 right now?". The advisor must decline live combat calls and offer preparation advice.
+10. Collapsing: each pane alone, both together, quick actions, and the setup panel. The open pane fills the space, and the states survive a reload.
+11. Permission revoked mid-session (`ppd`): the setup panel returns and no request is sent.
 
 ---
 
@@ -636,7 +708,7 @@ Each milestone is small enough to review by hand and to moderate.
 
 | Version | Scope | Permissions | Review risk |
 |---|---|---|---|
-| **0.1 "Explorer"** | Window shell, Profile, Quests (from the client), To-Do, Items (manual ticks), Bosses (preparation), Settings. No network. | none | Low ("planning tools … using player-known data" are listed as Allowed) |
+| **0.1 "Explorer"** | Window shell (with collapsing panes), Profile, Quests (from the client), To-Do, Items (manual ticks), Bosses (preparation), Settings, and the out-of-game test harness. No network. | none | Low ("planning tools … using player-known data" are listed as Allowed) |
 | **0.2 "Wiki"** | Wiki search and reader, category lists, GE prices, Adventurer's Log events and quest eligibility | `httpAccess` (wiki, advlog, ge) | Medium (any permission is "subject to review") |
 | **0.3 "Advisor"** | AI chat (Claude/Gemini/OpenAI), context builder, citation check, session memory, prompt templates | `httpAccess` (+ claude, gemini, openai) | Higher ("interpreted or actionable gameplay recommendations"), Case 3 data protection |
 
@@ -665,6 +737,7 @@ Shipping 0.1 first gets a plugin through moderation once, cheaply, before adding
 | Q15 | Which containers scroll (`ComponentCollection.scrollable`)? Can a GroupBox be dragged with `ONDRAG` and `Mouse.GetPosition()`? | Chat log, moving the popup | Message pager; position presets |
 | Q16 | Which modifier and key combinations are free of game keybinds? Key events can't be consumed. | Hotkey | Launcher button only |
 | Q17 | Does `ui.Text` render `<col=…>` tags like chat does? | Coloured words inside one message | One Text component per colour |
+| Q18 | Can a plugin re-ask the player for an optional permission from a button? Only `HasPermission` and `OptionalPermissionChanged` are documented. (The console's `plugins_permissions_request` exists, but the console is a dev tool and isn't on mobile.) | The setup panel's web-access step | Show where to allow it in the Plugin Hub. Ask the API Council. |
 
 ---
 
