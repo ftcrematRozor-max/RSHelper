@@ -50,7 +50,7 @@
 
 | Rule (quoted from Jagex docs) | Source page | Design consequence |
 |---|---|---|
-| "Features that provide interpreted or actionable gameplay recommendations may be subject to stricter review." | Plugin guidelines → Subject to review | The AI advisor will get a stricter review. Keep it to planning and preparation, and say so in the listing. |
+| "Features that provide interpreted or actionable gameplay recommendations may be subject to stricter review." | Plugin guidelines → Subject to review | The AI advisor will get a stricter review. Two kinds of content are kept apart (§8.3, §8.4). **Wiki-sourced information** (requirements, mechanics, drops, item stats) is public, player-known information, which the guidelines allow, so it's presented as fact and guidance, with a citation. **The advisor's own recommendations** (what to do next) are labelled as suggestions and stay planning and preparation only. The listing explains both. (Owner decision, review 2026-11-08.) |
 | Prohibited: "Automatic prayer switching/ability recommendations or execution." | Guidelines → Prohibited | The system prompt forbids live combat calls (§8.4). The Bosses tab shows preparation only (levels, gear, wiki links). |
 | Prohibited: "Plugins cannot export any information about other players." Subject to review: "Obtaining any information about other players." | Guidelines | Only the logged-in character is ever read or sent. The desktop app's multi-account switcher is not ported. |
 | Subject to review: "Any plugin which requests a permission." | Guidelines | `httpAccess` is **optional**. Without it the plugin still works offline (Explorer, To-Do, Profile from the client). |
@@ -222,7 +222,7 @@ Jagex: "Since plugins can't create new interfaces, they must instead use compone
 | Message log | A `ui.Layer` holding one `ui.Text` per message (`maxLines = 0`) | Each message's height comes from `config.Font.<font>:GetStringHeightAndLineCount(text, wrapWidth, lineSpacing)`. Messages are stacked top to bottom, and `SetScrollSize` / `SetScrollPos` are driven by `ONSCROLLWHEEL` plus the ▲ ▼ ⤓ (jump to latest) buttons. Only the newest 40 messages are kept as components (ID budget, §5.7). |
 | Log fallback | — | If layer scrolling turns out unsupported (§14 Q15): a **pager** showing one exchange at a time, with ◀ Older / Newer ▶ / Latest. |
 | Speaker label | `ui.Text`, coloured | "You" or "Advisor". Colour plus a word, so it isn't colour alone. |
-| Citation chips | `ui.Button` row (`BUTTON_CORNERED_NEUTRAL`) under an answer | One per wiki link: `Wiki: <Title>`, with a `⚠` prefix if the page is missing. A click opens the Explorer's Wiki tab on that page. |
+| Citation chips | `ui.Button` row (`BUTTON_CORNERED_NEUTRAL`) under an answer | One per wiki link: `Wiki: <Title>`, with a `⚠` prefix if the page is missing. A click opens the Explorer's Wiki tab on that page. Above the chips, a source line: **"Source: RuneScape Wiki (CC BY-NC-SA 3.0)"** when at least one cited page exists, or **"No wiki source: treat this as a suggestion"** when none does. |
 | Quick actions | `ui.Button` row | Goal, Quest (opens Quests), Boss (opens Bosses), Slayer (opens the Slayer form), ★ Saved prompts (a `ui.List` dropdown). Each **fills** the input and never sends. |
 | Input | `ui.InputField`, `Setup(VISIBLE, NONE, 1000)`, `inputMode = CHAT`, `emptyText = "Ask the advisor…"` | Enter submits (`ONCONTENTCHANGED` with reason `SUBMIT`). Escape doesn't send (`SUBMIT_ON_ESCAPE` is ignored). |
 | Send / Stop | `ui.Button` | Send is disabled while a request is running. Stop calls `HTTPRequest:Cancel()`. |
@@ -339,7 +339,7 @@ Each subsection gives: **From** (the `app.py` code), **To** (the plugin file), *
   - extract: `…&prop=extracts&exintro=1&explaintext=1&redirects=1&titles=<t>`, max 3,000 chars
   - existence check: `…&redirects=1&titles=A|B|…`, up to 50 at once (§8.3)
   - category lists: `…&list=categorymembers&cmtitle=<cat>&cmlimit=500&cmcontinue=…`
-- **Reader:** title, intro text, **Ask the advisor about this page** (passes the extract into the chat context), and links within the page as chips. The five Quick Links (Quests, Money making, Skill guides, Grand Exchange, D&Ds) open in the reader.
+- **Reader:** title, intro text, an attribution line ("From the RuneScape Wiki · CC BY-NC-SA 3.0", required by the wiki's licence), **Ask the advisor about this page** (passes the extract into the chat context), and links within the page as chips. The five Quick Links (Quests, Money making, Skill guides, Grand Exchange, D&Ds) open in the reader.
 - **Changes:**
   - **Dropped:** the 8.8 MB title cache, the weekly ~824-request crawl, the background thread, and the 3,000-URL context block.
   - Citation checks are one batched request per answer.
@@ -510,6 +510,9 @@ Dropped: the 3,000-URL "wiki links source block" (most of it was punctuation-onl
 1. Convert the Markdown-ish answer into the game's text markup (§5.5): headings → bold/colour, bullets → `•`, tables → "Label: value" lines, links → citation chips.
 2. **Wiki citation check** (replaces `verify_wiki_urls` and the 8.8 MB title cache). Collect every `runescape.wiki/w/<Title>` link and send **one** batched request: `api.php?action=query&format=json&formatversion=2&redirects=1&titles=A|B|C`, up to 50 titles. Pages with `missing = true` get a ⚠ marker. This was tested on 2026-11-08 and returns e.g. `("Fake page xyz", missing=true)`.
 3. Citation chips open the page **inside the Explorer's Wiki tab** (an intro extract via the wiki API). The plugin can't open a web browser (§14 Q3).
+4. **Facts vs suggestions.** The source line under each answer (§5.3) comes from step 2. If at least one cited page exists, the answer counts as wiki-sourced guidance. If none does, it's marked "No wiki source: treat this as a suggestion". Within the text, lines the model starts with `Suggestion:` (§8.4) are shown in the muted colour, so wiki facts and the advisor's own advice are easy to tell apart.
+
+**Wiki licence.** RuneScape Wiki content is CC BY-NC-SA 3.0 (confirmed via the wiki API's `rightsinfo`, 2026-11-08). Requirements: always attribute (the page title and link, via the chips and reader line); keep the plugin non-commercial (it's free); and if wiki text is ever bundled inside the plugin files, that text stays under the same licence. v1 bundles none and only fetches it live.
 
 ### 8.4 System prompt
 
@@ -520,6 +523,7 @@ Based on `agent_instructions.md`, shipped as `ai/system_prompt.lua` so a moderat
   - "You give planning and preparation advice only. Never give real-time combat instructions: no prayer switching, ability rotations for a fight in progress, timing calls, or where to stand or move."
   - "Never claim to know hidden game information, drop outcomes, or future boss mechanics."
   - "Only discuss the player described in the context. Don't speculate about other players."
+- **Added, facts vs suggestions** (owner decision): "Information that comes from the RuneScape Wiki extracts in the context is fact: state it plainly as guidance and cite the page as a full https://runescape.wiki/w/ link. Start any recommendation of your own (what the player should do next, or a choice between options) with 'Suggestion:'. If the context has no wiki source for something, say it's from general knowledge and may be out of date."
 - **Added, for the small window:** "Answer in at most ~250 words. Use short paragraphs and bullet points. Cite wiki pages as full https://runescape.wiki/w/ links."
 - Custom instructions from Settings are appended under `PLAYER CUSTOM INSTRUCTIONS:` (max 2,000 chars), as in the app.
 
@@ -613,6 +617,7 @@ From Jagex's "Submission process" and "Example description" pages.
 - [ ] **Email**: a public contact address, separate from the mod.io login.
 - [ ] **Feedback and collaboration**: e.g. GitHub issues on this repo, plus your stance on contributions.
 - [ ] **EULA**: the exact statement: "This Plugin uses software licensed by Jagex to the developer under the terms of the Jagex End User Licence Agreement (EULA) found at https://legal.jagex.com/docs/terms/eula (and all terms incorporated into it by reference). The development and any use of the Plugin is at all times subject to the Jagex EULA."
+- [ ] **How the advisor answers**: facts come from the RuneScape Wiki and are cited (CC BY-NC-SA 3.0), and the advisor's own suggestions are marked as such. It gives planning and preparation help only, never live combat calls.
 - [ ] **Permissions**: one paragraph per URL: which data goes to which base URL, and why. Say that the plugin works without `httpAccess` in offline mode.
 - [ ] **Data protection (Case 3)**: data used, endpoints, security measures, a link to the privacy notice, and a note that API keys are stored on the device in plain text.
 
