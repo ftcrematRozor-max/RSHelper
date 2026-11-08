@@ -208,7 +208,7 @@ Jagex: "Since plugins can't create new interfaces, they must instead use compone
 │ │ Ask the advisor…          │[Stop] │ [Ask about this ▸]          │
 │ └───────────────────────────┘       │                             │
 ├─────────────────────────────────────┴─────────────────────────────┤
-│ Claude · claude-opus-5-5 │ Context: stats, 3 goals, Wiki "Rigour" │
+│ Claude · claude-sonnet-5-5 │ Sends: stats, 3 goals, Wiki "Rigour" │
 └───────────────────────────────────────────────────────────────────┘
 ```
 
@@ -270,7 +270,7 @@ When all three are done, the panel closes and the chat pane appears. Settings (�
 | **Items** | 5 categories × catalog items, each with an item icon, a tick, and a "Seen in bank 3 Nov" note. Progress "17 / 35". | `ui.Check` + `ui.Sprite:SetAssociatedObject(objectID)` (item icon by object ID) |
 | **To-Do** | Add row (text, priority, category), filters, and task rows: tick, text, Ask, Edit, Delete (Delete asks to confirm). Suggest my next goals. | `ui.InputField`, `ui.List` dropdowns, `ui.Check`, `ui.Button` |
 | **Wiki** | Search box → result list → reader (title, intro text, Ask about this, related-link chips). Quick links. A Prices box: item name(s) → price and daily volume. | `ui.InputField`, `ui.List`, `ui.Text`, `ui.Button` |
-| **⚙ Settings** | Provider (Claude / Gemini / OpenAI), model ID, Claude effort (low / medium / high), key status (`set ••••abcd` / not set) with Enter key and Forget key, custom instructions (2,000 characters), answer length, hotkey, debug logging, Forget memory, Delete all my data (confirmation). | `ui.RadioGroup`, `ui.InputField`, `ui.Slider`, `ui.Check`, `ui.Button` |
+| **⚙ Settings** | Provider (Claude / Gemini / OpenAI), and **for each provider its own model and effort** (§8.1a), key status (`set ••••abcd` / not set) with Enter key and Forget key, custom instructions (2,000 characters), answer length, hotkey, debug logging, Forget memory, Delete all my data (confirmation). | `ui.RadioGroup`, `ui.InputField`, `ui.Slider`, `ui.Check`, `ui.Button` |
 
 ### 5.5 Text, images and colour
 
@@ -463,7 +463,7 @@ PersistentDB stores values per plugin, and they persist across game sessions. Ja
 
 | Key | Type | Contents | Replaces (app) |
 |---|---|---|---|
-| `settings` | StructuredData | `{ provider = "claude"\|"gemini"\|"openai", claudeModel = "claude-opus-5-5", claudeEffort = "medium", geminiModel = "gemini-3.6-flash", openaiModel = "gpt-4o", temperature = 0.4 (Gemini/OpenAI only), maxAnswerWords = 250, debug = false, hotkey = "ctrl+shift+h", window = { size = "M", x = .., y = .., chatCollapsed = false, explorerCollapsed = false, quickActionsCollapsed = false, setupCollapsed = false } }` (consent moved to `<char>.consent`, §9.2) | `settings.json` (global parts) |
+| `settings` | StructuredData | `{ provider = "claude"\|"gemini"\|"openai", providers = { claude = { model = "claude-sonnet-5-5", effort = "medium" }, gemini = { model = "gemini-3.8-flash" }, openai = { model = "gpt-6.1-sol", effort = "medium" } }, maxAnswerWords = 250, debug = false, hotkey = "ctrl+shift+h", window = { size = "M", x = .., y = .., chatCollapsed = false, explorerCollapsed = false, quickActionsCollapsed = false, setupCollapsed = false } }` (consent moved to `<char>.consent`, §9.2) | `settings.json` (global parts) |
 | `keys` | StructuredData | `{ claude = "", gemini = "", openai = "" }` | `gemini_api_key`, `openai_api_key` (Claude is new) |
 | `<char>.todo` | StructuredData | `{ nextId = 7, items = { { id = 6, text = "...", done = false, priority = "high"\|"med"\|"low", category = "quest"\|"skill"\|"boss"\|"other" } } }` | `todo_tasks` |
 | `<char>.favBosses` | StructuredData | `{ "Giant Mole", ... }` | `favorite_bosses` |
@@ -493,17 +493,15 @@ All three providers are called with `HTTPRequest:Post`. The Jagex HTTP API has n
 | Manifest base URL | `claude = "https://api.anthropic.com/"` | `gemini = "https://generativelanguage.googleapis.com/"` | `openai = "https://api.openai.com/"` |
 | Path | `v1/messages` | `v1beta/models/<model>:generateContent` | `v1/chat/completions` |
 | Headers (`AddHeader`) | `Content-Type: application/json`, `x-api-key: <key>`, `anthropic-version: 2026-10-21`, `anthropic-beta: server-side-fallback-2026-07-01` | `Content-Type: application/json`, `x-goog-api-key: <key>` | `Content-Type: application/json`, `Authorization: Bearer <key>` |
-| Body | `{ model = M, max_tokens = 16000, system = SYS, messages = { {role="user",content=...}, {role="assistant",content=...}, ... }, output_config = { effort = "medium" }, fallbacks = "default", cache_control = { type = "ephemeral" } }` | `{ systemInstruction = { parts = {{ text = SYS }} }, contents = { {role="user",parts={{text=...}}}, {role="model",...}, ... }, generationConfig = { temperature = 0.4, maxOutputTokens = 800 } }` | `{ model = M, temperature = 0.4, max_completion_tokens = 800, messages = { {role="system",content=SYS}, {role="user",...}, {role="assistant",...}, ... } }` |
+| Body | `{ model = M, max_tokens = 16000, system = SYS, messages = { {role="user",content=...}, {role="assistant",content=...}, ... }, output_config = { effort = "medium" }, fallbacks = "default", cache_control = { type = "ephemeral" } }` | `{ systemInstruction = { parts = {{ text = SYS }} }, contents = { {role="user",parts={{text=...}}}, {role="model",...}, ... }, generationConfig = { maxOutputTokens = 8192 } }` | `{ model = M, reasoning_effort = E, max_completion_tokens = 8000, messages = { {role="system",content=SYS}, {role="user",...}, {role="assistant",...}, ... } }` |
 | Answer | Join every `content[*]` block with `type == "text"`; skip `thinking` and `fallback` blocks | `candidates[1].content.parts[*].text` | `choices[1].message.content` |
 | Errors | non-200 → `error.type` + `error.message` from the body (table below) | non-200 → show `error.message` from the body | same |
 
-Default model IDs: Claude uses `claude-opus-5-5`; Gemini and OpenAI are copied from the app (`gemini-3.6-flash`, `gpt-4o`). All can be changed in Settings, because model names change faster than plugin releases.
-
 **Claude specifics** (Anthropic Messages API, `anthropic-version: 2026-10-21`)
-- **Don't send `temperature`** (or `top_p` / `top_k`). On this API version every model rejects them with HTTP 400, so the `temperature` setting applies to Gemini and OpenAI only.
-- **Don't send `thinking`.** Claude Opus 5.5 always thinks adaptively. Depth is set with `output_config.effort`: `medium` by default (sent explicitly), with `low` (fastest) and `high` in Settings.
+- **Don't send `temperature`** (or `top_p` / `top_k`). On this API version every model rejects them with HTTP 400 (§8.1a).
+- **Don't send `thinking`.** Claude Sonnet 5.5, Opus 5.5 and Haiku 5.5 think adaptively by default, and Sonnet 5.5 and Opus 5.5 reject `thinking: disabled`. Depth is set with `output_config.effort`: `medium` by default (sent explicitly), with `low` (fastest) and `high` in Settings.
 - **`max_tokens = 16000`.** It caps thinking *and* answer together, so a small value cuts answers off. Answer length is controlled by the prompt (~250 words, §8.4). If `stop_reason == "max_tokens"`, show "The answer was cut off. Ask for a shorter answer."
-- **Refusals:** `fallbacks = "default"` with the `server-side-fallback-2026-07-01` beta header lets the API retry a declined request on a suitable fallback model inside the same call. If `stop_reason == "refusal"` anyway, show "Claude declined this question. Try rephrasing it as planning advice." and don't retry.
+- **Refusals:** for Sonnet 5.5 and Opus 5.5, `fallbacks = "default"` with the `server-side-fallback-2026-07-01` beta header lets the API retry a declined request on a suitable fallback model inside the same call. If `stop_reason == "refusal"` anyway, show "Claude declined this question. Try rephrasing it as planning advice." and don't retry.
 - **History is plain text.** Earlier turns are sent as `{role, content = "<text>"}` only. Thinking blocks are never stored or sent back, and the system prompt never changes between requests. That keeps the plugin clear of the API's history-editing check on replayed thinking blocks, and the sliding window of the last 6 turns (§8.2) can drop old turns freely.
 - **Caching:** top-level `cache_control = { type = "ephemeral" }` caches the fixed system prompt and earlier turns between questions, which makes follow-ups cheaper and faster.
 - **Retries:** HTTP 429, 500 and 529 retry like the others (§6.13), waiting at least the `retry-after` header when present.
@@ -520,6 +518,27 @@ Default model IDs: Claude uses `claude-opus-5-5`; Gemini and OpenAI are copied f
 | 500 / 529 | `api_error` / `overloaded_error` | "Claude is busy. Retrying…", then "Try again in a minute." |
 
 **JSON.** The Jagex docs don't document any JSON library. The plugin ships its own small `lib/json.lua` (encode and decode, about 200 lines), written from scratch for this plugin and heavily commented. Don't paste in someone else's JSON library: its licence would have to allow uploading to AI tools, and it adds code a moderator has to review.
+
+### 8.1a Model choice per provider (owner review, 2026-11-08)
+
+Each provider keeps **its own model and effort setting**, chosen by the player in Settings. Switching provider keeps each one's choice.
+
+| Provider | Default model | Default effort | Effort sent as | Other built-in choices |
+|---|---|---|---|---|
+| Claude | `claude-sonnet-5-5` (Claude Sonnet 5.5) | `medium` | `output_config.effort` (low / medium / high) | `claude-opus-5-5`, `claude-haiku-5-5` |
+| Gemini | `gemini-3.8-flash` (Gemini 3.8 Flash) | the model's own default (medium) | not sent | none in v1 |
+| OpenAI | `gpt-6.1-sol` (GPT-6.1 Sol) | `medium` | `reasoning_effort` (low / medium / high) | none in v1 |
+
+- **Picker:** a `ui.ComboField` per provider listing:
+  - the built-in choices above;
+  - the models returned by that provider's model-list endpoint, loaded after **Check key** (Claude `GET v1/models`, Gemini `GET v1beta/models` filtered to models that support `generateContent`, OpenAI `GET v1/models`);
+  - a **Custom model ID** field, so new models work without a plugin update.
+- **Built-in models get every option.** Custom IDs get none: for a model ID not in `ai/providers/models.lua`, the plugin sends no effort or fallback options (they 400 on some models) and says "Advanced options off for custom models".
+- **Claude refusal fallbacks** (`fallbacks = "default"` and its beta header) are sent only for `claude-sonnet-5-5` and `claude-opus-5-5`. Claude Haiku 5.5 has no server-side fallback.
+- **No `temperature` for any provider.** The Claude API rejects it. GPT-6.1 Sol is a reasoning model, and its supported parameters are the reasoning settings above. Gemini 3-series models are tuned for their default temperature.
+- **Output limits include reasoning.** Gemini's `maxOutputTokens` and OpenAI's `max_completion_tokens` count thinking or reasoning tokens as well as the answer. So the limits are set well above the answer size (8192 and 8000), and answer length is controlled by the prompt (~250 words). A cut-off answer shows the same "cut off" message as Claude's.
+- **OpenAI uses Chat Completions**, which GPT-6.1 Sol supports for plain text. The plugin uses no tools, so the Responses API isn't needed.
+- **Sources** (checked 2026-11-08): Google's Gemini 3.8 Flash model page (`gemini-3.8-flash`, stable, default thinking medium) and OpenAI's reasoning and latest-model guides (`gpt-6.1-sol`, default effort medium, `none` not supported, Chat Completions supported without tools). Re-check before release.
 
 ### 8.2 Context sent with each question
 

@@ -22,14 +22,15 @@ Everything else in the spec (Explorer tabs, wiki, citations, memory, Gemini and 
 | Window | A popup with a header and **X**, a Chat pane, an Explorer pane (placeholder: "Explorer arrives in 0.1"), and a status bar. Both panes and the quick-action row collapse. The layout is remembered. | §5.2 |
 | Setup panel | Step 1 web access, step 2 signed consent, step 3 API key (save, mask, check, forget) | §5.3, §9.2 |
 | Settings page | The same setup controls in Plugin Hub → Settings, plus **Withdraw consent** and **Forget key** | §5.1, §9.2 |
-| Chat | Ask a question, get an answer from **Claude**, ask follow-ups (last 6 turns), Stop a request, see clear errors | §5.3, §8 |
+| Chat | Ask a question, get an answer from **Claude** (the player's chosen model), ask follow-ups (last 6 turns), Stop a request, see clear errors | §5.3, §8 |
+| Model choice | Pick the Claude model (Sonnet 5.5 default, Opus 5.5, Haiku 5.5, models loaded from the key, or a custom ID) and effort (low / medium / high) | §8.1a |
 | Context | A one-line summary of the character (combat level, total level, every skill level, members world). The name isn't sent. | §8.2 |
 | Quick actions | The collapsible row with one button: **Goal** (fills the input) | §5.3 |
 | Tests | Out-of-game test harness plus GitHub Actions | §11.3 |
 
 **Not in Build 1** (later builds): Gemini and OpenAI adapters (shown greyed out as "coming soon"), Explorer tabs, wiki search and citations, the source line and "Suggestion:" styling, session memory, GE prices, hotkey, window size presets and dragging, quest, boss and slayer templates.
 
-**Provider choice: Claude.** It's the provider you asked to add, and its request format has been checked against the current API docs. `claude-opus-5-5` at effort `medium` is the default, with `low` (faster) and `high` in Settings. The provider code sits behind a small adapter interface (§4, `ai/providers/`), so Gemini and OpenAI drop in at Build 2 without touching the chat or UI code.
+**Provider choice: Claude, with a model choice** (owner review, 2026-11-08). Its request format has been checked against the current API docs. The player picks the model: **`claude-sonnet-5-5` (Sonnet 5.5) at effort `medium` is the default**, `claude-opus-5-5` and `claude-haiku-5-5` are built-in choices, and a custom model ID is allowed (spec §8.1a). Settings are stored per provider, so Build 2 adds Gemini (`gemini-3.8-flash`) and OpenAI (`gpt-6.1-sol`, effort `medium`) with their own model choices, without touching the chat or UI code.
 
 ---
 
@@ -94,6 +95,7 @@ Each step is **one pull request** on its own branch, small enough to read line b
   - **Save** clears the field and shows `••••` plus the last 4 characters.
   - **Forget key** deletes it.
   - **Check key** is wired in Step 5.
+- **Model choice (§8.1a):** a `ui.ComboField` for the Claude model, plus a low / medium / high effort `ui.RadioGroup`, saved to `settings.providers.claude`. The model list starts with the built-in choices. In Step 5 it adds the models returned by **Check key**.
 - **Done when:** checks 1–4 and 9–10 of §6 pass. The out-of-game consent tests pass (name matching, provider switch, notice version bump, withdraw, log capped at 20).
 
 ### Step 5 — HTTP and the Claude adapter
@@ -104,9 +106,11 @@ Each step is **one pull request** on its own branch, small enough to read line b
   - Has its own 90-second watchdog on top of `request.timedOut` (adjusted after S3).
   - Returns `{ ok, status, json, errorText, timedOut, cancelled }`.
 - **`ai/providers/claude.lua`** (exactly §8.1):
-  - `buildMessageRequest{ key, model, effort, system, history }` returns path `v1/messages`; headers `x-api-key`, `anthropic-version: 2026-10-21`, `anthropic-beta: server-side-fallback-2026-07-01` and `Content-Type`; and a body with `max_tokens = 16000`, `output_config.effort`, `fallbacks = "default"`, top-level `cache_control`, and **no** `temperature` or `thinking`.
+  - `buildMessageRequest{ key, model, effort, system, history }` returns path `v1/messages`; headers `x-api-key`, `anthropic-version: 2026-10-21` and `Content-Type`; and a body with `max_tokens = 16000`, top-level `cache_control`, and **no** `temperature` or `thinking`.
+  - Model-dependent options come from `ai/providers/models.lua`. `output_config.effort` is sent for the built-in models. `fallbacks = "default"` plus the `anthropic-beta: server-side-fallback-2026-07-01` header is sent only for Sonnet 5.5 and Opus 5.5. A custom model ID gets neither.
   - `parseMessageResponse(status, json)` joins the `text` blocks (skipping `thinking` and `fallback`), handles `stop_reason` `max_tokens` and `refusal`, and maps the error table to player messages.
-  - `buildCheckKeyRequest(key)` returns `GET v1/models`.
+  - `buildCheckKeyRequest(key)` returns `GET v1/models`. Its result also fills the model picker.
+- **`ai/providers/models.lua`:** the built-in model list per provider and what each supports (effort levels, fallbacks).
 - **`ai/providers/init.lua`:** the adapter list. Gemini and OpenAI are listed as "coming soon".
 - **Wire-up:** **Check key** in the setup panel.
 - **Done when:**
@@ -157,6 +161,7 @@ All paths are under `plugin/`. Only `rs-helper/` is ever zipped.
 | `rs-helper/ai/chat.lua` | Conversation state, checks, send and cancel | 140 | `chat_test` |
 | `rs-helper/ai/providers/init.lua` | Adapter list | 30 | `chat_test` |
 | `rs-helper/ai/providers/claude.lua` | Anthropic Messages API mapping | 150 | `claude_test` |
+| `rs-helper/ai/providers/models.lua` | Built-in models per provider and their options | 50 | `claude_test` |
 | `rs-helper/ui/launcher.lua` | Ribbon content layer | 60 | Beta |
 | `rs-helper/ui/window.lua` | Popup frame, panes, collapsing, status bar | 260 | Beta |
 | `rs-helper/ui/widgets.lua` | Shared helpers (collapsible section, labelled row) | 120 | Beta |
@@ -185,7 +190,7 @@ Total: about 2,000 lines of plugin Lua plus about 700 of tests. Every file gets 
 }
 ```
 
-**Data stored in Build 1** (a subset of spec §7): `settings` (provider, `claudeModel`, `claudeEffort`, `debug`, `window`), `keys.claude`, `<char>.consent`, and `<char>.consentLog`. Chat history stays in memory only, so reloading the plugin clears the conversation. Session memory comes later.
+**Data stored in Build 1** (a subset of spec §7): `settings` (provider, `providers.claude = { model, effort }`, `debug`, `window`), `keys.claude`, `<char>.consent`, and `<char>.consentLog`. Chat history stays in memory only, so reloading the plugin clears the conversation. Session memory comes later.
 
 ---
 
@@ -229,8 +234,9 @@ Run this in one session, in order:
    - Ask "What should I train next for slayer?" A thinking counter shows, then the answer appears and wraps.
    - A follow-up ("why?") uses the earlier turns.
    - **Stop** mid-request shows "Stopped".
-6. **Errors:**
-   - A wrong model ID in Settings shows "Model not found".
+6. **Models and errors:**
+   - Switch to Opus 5.5, then Haiku 5.5, and ask again. Both answer, and the status bar shows the model.
+   - A custom model ID that doesn't exist shows "Model not found".
    - A bad key shows the 401 message.
    - Airplane mode (or pulling the network) shows a timeout and the window stays usable.
 7. **Guardrail:** "what prayer do I switch to on phase 3 right now?" is declined, with preparation advice offered instead.
