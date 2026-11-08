@@ -10,6 +10,8 @@
 > It does **not** allow feeding in other developers' plugins, so this spec
 > deliberately never looks at any third-party plugin code.
 
+**Contents:** 0 Assumptions · 1 Goals · 2 Jagex rules · 3 Architecture · 4 Manifest · 5 UI · 6 Module-by-module port · 7 Data model · 8 AI integration · 9 Privacy · 10 Endpoints · 11 Testing · 12 Submission checklist · 13 Milestones · 14 Open questions · A Desktop migration · B Docs used
+
 ---
 
 ## 0. Assumptions and decisions already made
@@ -63,3 +65,603 @@
 
 ---
 
+## 3. Architecture
+
+### 3.1 Folder layout
+
+The repo keeps the desktop app at the root. The plugin lives in its own folder, and **only** `plugin/rs-helper/` is zipped for mod.io.
+
+```
+plugin/
+  rs-helper/                    <- zipped for submission (main.lua + plugin.json at top level)
+    plugin.json                 manifest (§4)
+    main.lua                    entry point: loads modules, subscribes events, PluginShutdown()
+    lang/en.lua                 every user-facing string
+    lib/json.lua                small hand-written JSON encode/decode
+    lib/store.lua               PersistentDB wrapper: character key, typed get/set, defaults
+    lib/http.lua                HTTPRequest wrapper: permission check, User-Agent, JSON, errors, one queue
+    lib/timer.lua               "run this later" helper driven by Event.ServerLogic (~600 ms ticks)
+    lib/textfmt.lua             AI Markdown -> game text tags (<col>, <br>), word limits
+    lib/log.lua                 debug logging, off by default
+    data/bosses.lua             boss catalog (ported from RS3_BOSS_CATALOG)
+    data/items.lua              major-items catalog (ported from MAJOR_ITEMS_CATALOG)
+    data/prompts.lua            prompt templates (quest, boss, slayer, goal, to-do)
+    game/profile.lua            live stats from the Player API
+    game/quests.lua             quest status and requirements from config.Quest
+    game/items.lua              owned-item detection from inventories
+    web/wiki.lua                wiki search, extract, category lists, title check
+    web/advlog.lua              Adventurer's Log: own events and quest eligibility
+    web/ge.lua                  GE prices
+    ai/system_prompt.lua        the advisor's base instructions (readable by moderators)
+    ai/context.lua              builds the context block (§8.2)
+    ai/providers.lua            Gemini / OpenAI request and response mapping
+    ai/chat.lua                 conversation state, send/cancel, session memory
+    ui/window.lua               popup shell: header, Chat | Explorer split, tab bar
+    ui/chat_view.lua            chat pane
+    ui/explorer/*.lua           profile, quests, bosses, items, todo, wiki, settings
+    ui/widgets.lua              shared rows, chips, badges
+  tools/                        dev-only helpers (never zipped)
+  README-dev.md                 how to run in the beta world (never zipped)
+```
+
+Rules: one job per file, under ~300 lines each, a header comment explaining the file, and a comment on every function. No metatable tricks, no code generation, no minified code.
+
+### 3.2 Data flow
+
+```
+ game client ──(Player, config.Quest, Inventory, events)──► game/*  ─┐
+                                                                    ├─► ai/context ─► ai/providers ─► Gemini/OpenAI
+ runescape.wiki / Adventurer's Log / GE ──(HTTPRequest)──► web/* ───┤                     │
+                                                                    │                     ▼
+ PersistentDB ◄──► lib/store ◄──► To-Do, favourites, items, memory ─┘           lib/textfmt ─► ui/chat_view
+                                                                     ui/explorer/* ◄── game/*, web/*, store
+```
+
+### 3.3 Lifecycle and events
+
+| When | Event / hook | What happens |
+|---|---|---|
+| Plugin enabled | `main.lua` runs | Load settings. Subscribe events. If `Player.IsAvailable()`, build the profile now. |
+| Ribbon icon clicked | `Event.ContentLayerReady` (`component`) | Build the Chat + Explorer UI inside the provided layer (§5). The layer is "cleared of pre-existing elements immediately before this event is called", so rebuild from saved state each time. |
+| Launcher button or hotkey | `ui.Hook.ONBUTTONPRESSED` / `Event.KeyDown` | Show the popup on the plugin build layer, creating it the first time (§5.1). |
+| Plugin Hub → Settings icon | `Event.SettingsLayerReady` (`component`) | Build the Settings page (§5.4). |
+| Login / world hop / lobby | `Event.GameStateChanged` (`newState`: `GAME` = 30, `LOBBY` = 20 …) | On `GAME`: refresh profile and quests, and load this character's data. On leaving `GAME`: save a snapshot. |
+| XP gained | `Event.SkillTransmit` (`skill`, `newXP`, `newGameplayLevel` …) | Update that skill in the profile cache. Re-mark the Profile tab dirty. |
+| Quest progress | `Event.VarTransmit` (`var`, `newValue`) | If `var` is one of the quests' `masterQuestVars[1].varPlayer`, refresh that quest. |
+| Inventory seen / changed | `Event.InventoryAdded` / `InventoryUpdated` | Re-check owned major items (§6.8). |
+| Permission granted / revoked | `Event.OptionalPermissionChanged` | Enable or disable the online features live. |
+| Every ~600 ms | `Event.ServerLogic` | Drive `lib/timer` (retries, debounce, idle timeout). |
+| Disabled / client closes | `PluginShutdown()` (global function) | Final save. Data is also saved on every change, because a crash skips this hook. |
+
+---
+
+## 4. Manifest (`plugin.json`)
+
+```json
+{
+    "name": "RS Helper",
+    "version": "0.1.0",
+    "contactEmailAddress": "<public contact email, not your mod.io login>",
+    "requiredDependencies": {},
+    "optionalDependencies": {},
+    "requiredPermissions": [],
+    "optionalPermissions": [ "httpAccess" ],
+    "urls": {
+        "wiki":   "https://runescape.wiki/",
+        "advlog": "https://secure.runescape.com/m=adventurers-log/",
+        "ge":     "https://api.weirdgloop.org/",
+        "gemini": "https://generativelanguage.googleapis.com/",
+        "openai": "https://api.openai.com/"
+    },
+    "hasRibbonIcon": true,
+    "hasSettingsIcon": true
+}
+```
+
+- `httpAccess` is **optional**: Jagex recommends that "unless your plugin won't work at all without a specific permission". The plugin checks `Plugin.HasPermission(PluginPermissions.httpAccess)` before any network feature.
+- `chatAccess` and `trackingAccess` are **not** requested. Nothing needs them, and every permission adds review.
+- v0.1 ships with no `urls` and no permissions at all (§13). Each URL is added in the milestone that first uses it.
+
+---
+
+## 5. User interface: the popup Chat + Explorer window
+
+### 5.1 Where the window lives and how it opens
+
+Jagex: "Since plugins can't create new interfaces, they must instead use components in the appropriate interface as a parent." Two hosts are available:
+
+| Host | API | Used for |
+|---|---|---|
+| **Ribbon content layer**: the plugin's page inside the game's floating *Plugins* window | `Event.ContentLayerReady` → `component`, with `"hasRibbonIcon": true` | The **launcher**: an "Open RS Helper" button, a one-line status (profile loaded / key set / permission), and the three newest open To-Do items. |
+| **Plugin build layer**: a layer "on the game window that appears above most game and interface components" | `ui.Interfaces:GetComponent(id.Component.TOPLEVEL_V2__PLUGIN_BUILD_LAYER_TOP)` | The **popup** itself: a `ui.GroupBox` (stylesheet `id.StyleSheet.DEFAULT`), the same pattern as Jagex's UI tutorial. |
+| **Settings layer**: the Settings icon in Plugin Hub → Manage | `Event.SettingsLayerReady` → `component`, with `"hasSettingsIcon": true` | The same Settings page as the popup's ⚙ tab (one builder function used in both places). |
+
+**Opening and closing**
+- Open: the launcher button, or an optional hotkey (`Event.KeyDown` with a modifier, default **Ctrl+Shift+H**, configurable or off, §14 Q16).
+- Close: the **X** button in the popup header (`hidden = true`). Components are hidden and reused, not destroyed and rebuilt, so reopening is instant and keeps chat scroll and tab state.
+- Don't add minimenu (right-click) entries. "Input or menu customisation" is subject to review, and the plugin doesn't need them.
+
+**Position and size**
+- Default size: 46% × 62% of the game window, clamped to at least 560 × 380 units. Placed at the right-centre. Uses `SetSize(w, h, pctW, pctH)` and `SetPos(x, y, parentPct, selfPct)` so it follows client resizes. Also listen to `Event.WindowSizeChanged`.
+- **Size presets** (Small / Medium / Large) in the header menu. Jagex documents no resize handle.
+- **Moving:** drag the header. The pieces are `dragConfig`, `ONDRAG` / `ONDRAGCOMPLETE` and `Mouse.GetPosition()`, but Jagex documents no full window-drag pattern (§14 Q15). Fallback: a **Position** preset (left / centre / right). The position is saved in `settings`.
+- **Compact mode** (for small screens or the Small preset): one pane at a time, with a **Chat | Explorer** switch.
+
+### 5.2 Layout
+
+```
+┌─ RS Helper ─────────────────────────────── [Size ▾] [Compact] [X] ┐
+│ CHAT                               │ EXPLORER                      │
+│ ┌────────────────────────────────┐ │ Profile Quests Bosses Items   │
+│ │ You  How do I unlock Rigour?   │ │ To-Do  Wiki  ⚙                │
+│ │                                │ │ ┌───────────────────────────┐ │
+│ │ Advisor                        │ │ │                           │ │
+│ │ • You need 74 Dungeoneering... │ │ │   (active tab content)    │ │
+│ │ [Wiki: Rigour] [Wiki: Daemon…] │ │ │                           │ │
+│ │                        ▲ ▼ ⤓   │ │ │                           │ │
+│ └────────────────────────────────┘ │ │                           │ │
+│ [Goal] [Quest] [Boss] [Slayer] [★] │ │                           │ │
+│ ┌──────────────────────────┐[Send] │ │                           │ │
+│ │ Ask the advisor…         │[Stop] │ └───────────────────────────┘ │
+│ └──────────────────────────┘       │ [Ask about this ▸]            │
+├────────────────────────────────────┴───────────────────────────────┤
+│ Gemini · gemini-3.6-flash │ Context: stats, 3 goals, Wiki "Rigour" │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+- **Outer structure:** a horizontal `ui.Panel` (`isVertical = false`). Chat takes 55% and Explorer 45%. Nested vertical Panels go inside each.
+- **Explorer tabs:** a `ui.PagedLayer` with one `PagedLayerHeader` (stylesheet `PAGED_LAYER_DEFAULT`). The pages are Profile, Quests, Bosses, Items, To-Do, Wiki, and ⚙ Settings. Jagex: "Components are associated with the currently active page when created", so each tab is built after switching `activePage` to it.
+- **Ask about this ▸** (bottom of the Explorer) sends whatever is selected (a quest, boss, wiki page or To-Do item) to the Chat input using the matching template. This is the main link between the two halves.
+- **Status bar:** provider and model, plus a one-line list of the context that *will* be sent. Clicking it opens **What will be sent**, showing the full context text, for transparency with players and moderators.
+
+### 5.3 Chat pane
+
+| Part | Component | Behaviour |
+|---|---|---|
+| Message log | A `ui.Layer` holding one `ui.Text` per message (`maxLines = 0`) | Each message's height comes from `config.Font.<font>:GetStringHeightAndLineCount(text, wrapWidth, lineSpacing)`. Messages are stacked top to bottom, and `SetScrollSize` / `SetScrollPos` are driven by `ONSCROLLWHEEL` plus the ▲ ▼ ⤓ (jump to latest) buttons. Only the newest 40 messages are kept as components (ID budget, §5.7). |
+| Log fallback | — | If layer scrolling turns out unsupported (§14 Q15): a **pager** showing one exchange at a time, with ◀ Older / Newer ▶ / Latest. |
+| Speaker label | `ui.Text`, coloured | "You" or "Advisor". Colour plus a word, so it isn't colour alone. |
+| Citation chips | `ui.Button` row (`BUTTON_CORNERED_NEUTRAL`) under an answer | One per wiki link: `Wiki: <Title>`, with a `⚠` prefix if the page is missing. A click opens the Explorer's Wiki tab on that page. |
+| Quick actions | `ui.Button` row | Goal, Quest (opens Quests), Boss (opens Bosses), Slayer (opens the Slayer form), ★ Saved prompts (a `ui.List` dropdown). Each **fills** the input and never sends. |
+| Input | `ui.InputField`, `Setup(VISIBLE, NONE, 1000)`, `inputMode = CHAT`, `emptyText = "Ask the advisor…"` | Enter submits (`ONCONTENTCHANGED` with reason `SUBMIT`). Escape doesn't send (`SUBMIT_ON_ESCAPE` is ignored). |
+| Send / Stop | `ui.Button` | Send is disabled while a request is running. Stop calls `HTTPRequest:Cancel()`. |
+| States | `ui.Text` in the log | "Thinking…" with a counter in seconds (updated on `ServerLogic`), plus errors in plain words: "Your API key was rejected", "Out of credit or rate-limited, try again in a minute", "No response after 60 s". |
+| Locked states | Overlay text plus a button | No `httpAccess` → "Allow web access in Plugin Hub to use the advisor". No key → "Add a Gemini or OpenAI key" (opens ⚙). No consent yet → the one-time data notice (§9). |
+
+### 5.4 Explorer tabs
+
+| Tab | Content | Main components |
+|---|---|---|
+| **Profile** | Header: name, combat level, total level and total XP, members/F2P world. A 29-skill grid showing the level (and the boosted level when it differs). Below: "Recent activity" (Adventurer's Log, online only, 10-minute cache). | `ui.Grid` `SetColumnRows(4, 8)`, `ui.Text` cells, `ui.Sprite` skill icons if suitable built-in sprite IDs exist |
+| **Quests** | Filter (Can start / In progress / Done / Blocked / All), a search box, and a list with QP and difficulty. The detail area shows missing requirements and buttons: Ask about this, Open on wiki. | `ui.RadioGroup` (toggle buttons), `ui.InputField`, `ui.List` (`entryHeight` 22, fixed), `ui.Text` |
+| **Bosses** | Tier filter, a favourites-first list with a readiness word (Ready / Borderline / Under-levelled) and recommended combat level. Detail: ★ Favourite toggle, Plan this boss. A Slayer card opens the Slayer form (monster combo, count, master). | `ui.List`, `ui.Check`, `ui.ComboField`, `ui.InputField` (`NUMERIC`) |
+| **Items** | 5 categories × catalog items, each with an item icon, a tick, and a "Seen in bank 3 Nov" note. Progress "17 / 35". | `ui.Check` + `ui.Sprite:SetAssociatedObject(objectID)` (item icon by object ID) |
+| **To-Do** | Add row (text, priority, category), filters, and task rows: tick, text, Ask, Edit, Delete (Delete asks to confirm). Suggest my next goals. | `ui.InputField`, `ui.List` dropdowns, `ui.Check`, `ui.Button` |
+| **Wiki** | Search box → result list → reader (title, intro text, Ask about this, related-link chips). Quick links. A Prices box: item name(s) → price and daily volume. | `ui.InputField`, `ui.List`, `ui.Text`, `ui.Button` |
+| **⚙ Settings** | Provider (Gemini / OpenAI), model ID, key status (`set ••••abcd` / not set) with Enter key and Forget key, custom instructions (2,000 characters), answer length, hotkey, debug logging, Forget memory, Delete all my data (confirmation). | `ui.RadioGroup`, `ui.InputField`, `ui.Slider`, `ui.Check`, `ui.Button` |
+
+### 5.5 Text, images and colour
+
+- **Font:** `id.Font.MUSEO_SANS_15PT_REGULAR`, the only font Jagex's docs name. Text without a font is invisible.
+- **Line breaks:** `<br>` works in `ui.Text` (Jagex's database tutorial uses it). Colour tags (`<col=FF0000>`) are documented for chat messages. Whether they work in `ui.Text` is unverified (§14 Q17), so colour whole Text components with `colour` instead.
+- **AI answers** are converted by `lib/textfmt.lua`: `#` headings become their own line in the header colour; `-`/`*` bullets become `•`; `**bold**` loses its markers; tables become "Column: value" lines; links become citation chips (§5.3). Anything else stays plain text.
+- **No emoji.** The game font may not have them (§14 Q11). The app's 🟢🟡🔴 badges become coloured words.
+- **Images:**
+  - Item icons by object ID (`SetAssociatedObject`) are fine and need no custom resources.
+  - No web images: nothing turns downloaded bytes into a sprite.
+  - Bundled PNGs (≤ 1024×1024) are possible but count as "custom resources", which are subject to review. v1 uses none.
+
+### 5.6 Input and keyboard
+
+- **API keys:** a field set to `HIDDEN` or `SHOW_LAST` becomes "restricted" and **the plugin then reads its content as an empty string**. So the key is typed in a **visible** field marked "Paste your key", saved on Enter, then the field is cleared and the key shown only as `••••` plus its last 4 characters. Warn: "Don't do this while streaming."
+- **Pasting** isn't documented for `InputField` (§14 Q14). Typing a 40–160-character key by hand would be painful, so check this in the beta first.
+- **Hotkey:** Jagex's key events are read-only, so the plugin can't stop the game from also seeing the key. Use a modifier combination the game doesn't use by default, and let players change or turn it off.
+- `Keyboard.IsAvailable()` is false on mobile. Hide the hotkey setting there.
+
+### 5.7 Component IDs and performance
+
+- ID limits (Jagex `ui/index`): category IDs 0–235. Dynamic IDs go up to 4096 under category 0, and up to 235 under other categories. Give each area its own category: 1 header, 2 chat log, 3 chat controls, 4–10 the Explorer tabs, 11 dialogs.
+- Build each Explorer tab the **first time** it's opened, then update it in place. Lists use `SetEntries`, not rebuilt components.
+- Prefer `SetPos` / `SetSize` over separate setters ("less layout operations").
+- Use `PluginLogic` / `ServerLogic` for timers, not `ONTIMER`.
+- Stylesheets: `DEFAULT` (group boxes), `BUTTON_DEFAULT` / `BUTTON_CORNERED_NEUTRAL`, `INPUT_DEFAULT`, `CHECKBOX_DEFAULT`, `RADIO_DEFAULT`, `DROPDOWN_DEFAULT`, `COMBO_DEFAULT`, `PAGED_LAYER_DEFAULT`, `SLIDER_DEFAULT`.
+
+---
+
+## 6. Module-by-module port
+
+Each subsection gives: **From** (the `app.py` code), **To** (the plugin file), **How** (the Jagex API used), and **Changes** (what's dropped or fixed).
+
+### 6.1 Settings and persistence
+- **From:** `load_settings` / `save_settings` (41–79), `~/.rshelper/settings.json`.
+- **To:** `lib/store.lua`.
+- **How:** `PersistentDB:GetStructuredData` / `SetStructuredData`, plus the typed string and bool helpers. Keys as in §7.
+- **Changes:** per-character keys, and each value saved on its own (no nine-argument `save_settings`).
+
+### 6.2 Player profile
+- **From:** `fetch_runemetrics_profile` (323–399), `fetch_player_profile` (411–429), `extract_player_cb_level` (302–312), the archive (98–135), the Profile tab (1161–1218).
+- **To:** `game/profile.lua` + `ui/explorer/profile.lua`.
+- **How:**
+  - `Player.IsAvailable()`, then:
+  - name: `Player.GetEntity().displayName`
+  - combat: `Player.GetCombatLevel()`
+  - per skill, for every `SkillType` 0–28: `Player.GetLevelUncapped(s)`, `Player.GetXPUncapped(s)`, and `Player.GetLevelGameplay(s)` (boosted/drained)
+  - members world: `World.IsMembers()`
+  - total level and total XP are sums (the API has no total function)
+  - recent activity (optional, online): `web/advlog.lua` → `api/v1/playerEvents/<own name>`, cached 10 min
+- **Changes:**
+  - Removes the whole RuneMetrics → archive → Playwright chain, so the data is always live.
+  - Removes the default combat level of 100, which made the boss indicators meaningless.
+  - The profile is a **table**, not a text blob, so the UI no longer parses its own text with regexes.
+  - Rank is dropped: it isn't in the client API, and it's of little use to the advisor.
+
+### 6.3 Accounts and login gate
+- **From:** sidebar accounts (1032–1076), login form (952–976).
+- **To:** removed.
+- **How:** the logged-in character is the account. Data switches automatically on `GameStateChanged` → `GAME`.
+- **Changes:** there's no multi-account lookup, because "obtaining any information about other players" is subject to review and "exporting" it is prohibited. There's no login gate: everything except Chat works without an API key, and Chat shows "Add your API key in Settings".
+
+### 6.4 Quests
+- **From:** `fetch_rs_quests` (447–462), `extract_completed_quests` / `get_available_quests` (488–524), `quest_dialog` (864–872).
+- **To:** `game/quests.lua` + `ui/explorer/quests.lua`.
+- **How:**
+  - Each quest is a `config.Quest` object with `name`, `questPoints`, `difficulty`, `isMembers`, `hasStartedQuest`, `hasFinishedQuest`, `canStartQuest`, `preReqSkills` (+ `completedPreReqSkills`), `preReqQuests` (+ `completedPreReqQuests`), and `preReqQuestPoints`.
+  - **Finding all quest IDs:** the client API has no "list all quests" call. Plan:
+    1. **Online:** the Adventurer's Log `playerData?includeQuests=true` returns every quest keyed by its internal numeric ID, which can be passed to `config.Quest.FromID(id)`. Check in the beta that the IDs match (§14 Q2).
+    2. **Offline fallback:** a quest-ID list in `data/quest_ids.lua`, produced in the dev client by a `tools/` script and reviewed by hand.
+  - QP: the advlog `qp` value when online, otherwise the sum of `questPoints` over finished quests (Jagex warns this can differ slightly).
+- **Explorer view:** filters for *Can start now* / *In progress* / *Completed* / *Blocked*. A blocked quest lists its missing requirements ("Needs 70 Agility (you: 64)", "Needs quest: Plague's End"). Buttons: **Ask the advisor** and **Open on wiki** (reader tab).
+- **Changes:**
+  - "Available" now means `canStartQuest` and not started, using the game's real requirement check. The app only checked "not completed", and had a case bug.
+  - The prompt template drops "puzzle solutions" and "step-by-step walkthrough", because the guidelines bar trivialising "intended gameplay challenge". It becomes: "requirements, preparation, recommended items and the wiki quick guide link". Step-by-step help is Quest Helper's job (good-practice rule on duplicates).
+
+### 6.5 Bosses
+- **From:** `RS3_BOSS_CATALOG` (137–170), `fetch_rs_bosses` (464–486), `get_combat_indicator` (314–321), `boss_dialog` (875–926), `get_favorite_bosses_memory` (590–594).
+- **To:** `data/bosses.lua`, `ui/explorer/bosses.lua`.
+- **How:**
+  - The 32-entry catalog is ported as plain data: `{ name, wikiTitle, recCombat, tier }`.
+  - The wiki list `Category:Bosses` is merged in as "no recommendation" entries.
+  - Player combat level comes from `Player.GetCombatLevel()`.
+  - Optional: `config.NPC.<NAME>.visibleCombatLevel` for the boss's own level, where the NPC config name is known.
+- **Readiness badge:** same thresholds as the app: ready if `cb ≥ rec`, borderline if `cb ≥ rec − 15`, otherwise under-levelled. Colour plus a word, never colour alone.
+- **Changes:**
+  - Wiki-merged bosses no longer get a made-up `rec_cb` of 110.
+  - The global catalog is no longer mutated.
+  - The template keeps preparation (gear, inventory, levels, a summary of mechanics from the wiki) and must not ask for live in-fight instructions.
+  - Boss images: no web images (§5.5). The window shows the name and tier text, plus an NPC model only if the Model component supports it (§14 Q10).
+
+### 6.6 Wiki search, reader and citations
+- **From:** `fetch_rs_wiki_info` (613–626), the Wiki tab (1220–1277), `update_wiki_cache_background` (183–240), `verify_wiki_urls` (673–701), `format_wiki_links_source_block` (262–290).
+- **To:** `web/wiki.lua`, `ui/explorer/wiki.lua`.
+- **How:** `HTTPRequest.new(Plugin.urls.wiki, path):Get(cb)` with:
+  - search: `api.php?action=query&format=json&formatversion=2&list=search&srlimit=10&srsearch=<q>`
+  - extract: `…&prop=extracts&exintro=1&explaintext=1&redirects=1&titles=<t>`, max 3,000 chars
+  - existence check: `…&redirects=1&titles=A|B|…`, up to 50 at once (§8.3)
+  - category lists: `…&list=categorymembers&cmtitle=<cat>&cmlimit=500&cmcontinue=…`
+- **Reader:** title, intro text, **Ask the advisor about this page** (passes the extract into the chat context), and links within the page as chips. The five Quick Links (Quests, Money making, Skill guides, Grand Exchange, D&Ds) open in the reader.
+- **Changes:**
+  - **Dropped:** the 8.8 MB title cache, the weekly ~824-request crawl, the background thread, and the 3,000-URL context block.
+  - Citation checks are one batched request per answer.
+  - Requests always have a callback timeout path (`request.timedOut`). The app had no timeouts on four wiki calls.
+
+### 6.7 Slayer
+- **From:** `fetch_slayer_monsters` (431–445), `slayer_dialog` (928–938).
+- **To:** a **Slayer** card on the Bosses tab, which opens a small form: monster (list from `Category:Slayer_assignments`), count (default 150), and master (the app's 8 names).
+- **How:** form → `data/prompts.lua` slayer template → Chat.
+- **Changes:** none functional. The Jagex docs don't document reading the current task (§14 Q6), so it stays manual.
+
+### 6.8 Major items tracker
+- **From:** `MAJOR_ITEMS_CATALOG` (526–572), `get_owned_items_memory` (574–581), Items tab (1279–1316).
+- **To:** `data/items.lua`, `game/items.lua`, `ui/explorer/items.lua`.
+- **How:**
+  - 35 items in 5 categories, ported as data: `{ id, name, objConfig }`, where `objConfig` is the `config.Obj` name found in the dev client (`pan Obj`).
+  - **Auto-detect:** when `InventoryAdded` / `InventoryUpdated` fires for the backpack (`config.Inv.INV`), worn equipment, or the bank (`config.Inv.BANK`, only while the server has sent it), call `inv:GetTotal(config.Obj.X) > 0`. Mark the item **Seen** with a date.
+  - Manual ticks stay, for items kept elsewhere (POH, cape rack, etc.).
+- **Changes:**
+  - Emoji category labels become plain text (the game font may not have emoji, §14 Q11).
+  - The progress counter only counts catalog IDs (it went over 100% in the app).
+  - Item icons come from the game by object ID (`ui.Sprite:SetAssociatedObject`), with no web images.
+
+### 6.9 Grand Exchange prices
+- **From:** `fetch_ge_prices` (628–642), `extract_ge_context_from_prompt` (644–671), GE expander (1244–1261).
+- **To:** `web/ge.lua`, plus a **Prices** box on the Wiki tab.
+- **How:**
+  - The client API has **no price lookup**. `GrandExchange` only reads the player's own offers, and `ObjType.cost` isn't documented as a GE price.
+  - So keep the app's source: `HTTPRequest.new(Plugin.urls.ge, "exchange/history/rs/latest?name=A|B")`. Only item names are sent.
+  - `ObjType.isStockmarket` tells whether an item is tradeable at all.
+- **Changes:**
+  - Use exact item names, from catalogs or `ObjType.name`, instead of the app's lowercase keyword list. That list included "herblore", which isn't an item, and lowercase names may not match.
+  - Cache prices for 5 minutes (the app used 300 s).
+  - Guard against error payloads (the app's GE tab could crash on one).
+
+### 6.10 To-Do and goals
+- **From:** `get_todo_memory` (583–588), To-Do panel (1637–1684), `roo_task.md`.
+- **To:** `ui/explorer/todo.lua` + `<char>.todo`.
+- **Features:** add (text, priority, category), tick done, edit text (planned in `roo_task.md` but never built), delete with confirmation, filter by status and category, **Ask the advisor** per task, and **Suggest my next goals** (fills the chat box with the app's template).
+- **Changes:** real categories, counter IDs, and priority included in the AI context.
+
+### 6.11 Prompt templates and saved prompts
+- **From:** Goal / Quest / Boss / Slayer / Custom buttons (1440–1492), `custom_prompt_dialog` (940–950).
+- **To:** `data/prompts.lua` + quick-action chips above the chat input (§5.2).
+- **Changes:** templates **fill** the input and never auto-send, the same as the app. Saved prompts move to `<char>.prompts`.
+
+### 6.12 System prompt and custom instructions
+- **From:** `load_agent_instructions` (81–96), `agent_instructions.md`, the instructions editor (1116–1135).
+- **To:** `ai/system_prompt.lua`, plus a Settings field for custom instructions.
+- **Changes:** the base prompt is fixed in code, so a moderator can read exactly what the advisor is told, and it includes the guideline guardrails (§8.4). Players can only *append* custom instructions. The character name is no longer inserted into the prompt.
+
+### 6.13 LLM providers
+- **From:** Gemini and OpenAI SDK calls (1572–1624).
+- **To:** `ai/providers.lua` (§8.1).
+- **Changes:**
+  - Raw HTTPS instead of SDKs.
+  - Retries on HTTP 503 and 429: up to 2, at 2 s and then 5 s, using `lib/timer` (no `sleep` is available).
+  - The default provider is whichever key is present (the app defaulted to Gemini even when only an OpenAI key was set).
+  - The last 6 turns of history are sent (the app sent none).
+
+### 6.14 Session memory and logs
+- **From:** `load_past_session_memories` (596–611), `log_interaction` (991–1014), the log viewer (1092–1114).
+- **To:** `ai/chat.lua`, `<char>.memory` (§8.5).
+- **Changes:**
+  - Full transcripts are **not** stored, for privacy and storage size. Only 3 short summaries are kept.
+  - "Clear chat" empties the current conversation. "Forget memory" in Settings deletes `<char>.memory`.
+
+### 6.15 Dropped entirely
+
+| App feature | Lines | Why |
+|---|---|---|
+| Image upload, paste and multimodal | 765–859, 1343–1364, 1418–1439, 1478–1530 | No file or clipboard API, and no screenshot API |
+| RuneApps Playwright scraper | 401–409 | Not possible in Lua. Jagex best practice: "Avoid scraping HTML pages". |
+| Background wiki crawler + 8.8 MB cache | 172–245 | Replaced by on-demand calls (§6.6) |
+| Remote images / HEAD checks | 293–300, 902–906, 1298–1302 | HTTP returns text; images come from game sprites or resources |
+| Custom CSS / JS | 709–859 | Engine UI components only |
+| Opening links in a browser | 1237, 1268–1277 | Not documented. Links open in the in-game wiki reader instead. |
+| Launcher and .exe | `launcher.pyw` | The Plugin Hub enables the plugin |
+
+---
+
+## 7. Data model (PersistentDB)
+
+PersistentDB stores values per plugin, and they persist across game sessions. Jagex: records "are shared by all game clients of the same type on the device, and therefore all characters that are played from the device". So every per-character key is prefixed with a **character key**.
+
+- **Character key** = the display name, lowercased, with spaces and underscores both turned into `_`. Jagex treats names as "case-insensitive, and spaces and underscores are treated the same".
+- A name change starts a fresh profile. The optional `trackingAccess` permission would fix that, but it adds another permission to review, so v1 doesn't use it (§14 Q5).
+- All values use the **typed** setters and getters (`SetStructuredData` / `GetStructuredData`, `SetString` / `GetString`, …). Jagex warns that the untyped `Set` can't tell Int from Float.
+- Save on every user change, not only in `PluginShutdown()`. Jagex notes data is lost "if the client crashes".
+
+| Key | Type | Contents | Replaces (app) |
+|---|---|---|---|
+| `settings` | StructuredData | `{ provider = "gemini"\|"openai", geminiModel = "gemini-3.6-flash", openaiModel = "gpt-4o", temperature = 0.4, maxAnswerWords = 250, debug = false, hotkey = "ctrl+shift+h", window = { size = "M", x = .., y = .. }, aiConsent = false }` | `settings.json` (global parts) |
+| `keys` | StructuredData | `{ gemini = "", openai = "" }` | `gemini_api_key`, `openai_api_key` |
+| `<char>.todo` | StructuredData | `{ nextId = 7, items = { { id = 6, text = "...", done = false, priority = "high"\|"med"\|"low", category = "quest"\|"skill"\|"boss"\|"other" } } }` | `todo_tasks` |
+| `<char>.favBosses` | StructuredData | `{ "Giant Mole", ... }` | `favorite_bosses` |
+| `<char>.ownedItems` | StructuredData | `{ slayer_helm_1 = true, ... }` (manual ticks only, see §6.8) | `owned_items` |
+| `<char>.prompts` | StructuredData | `{ { name = "...", text = "..." } }` | `custom_prompts` |
+| `<char>.customInstructions` | String | free text, max 2,000 chars | `custom_instructions` |
+| `<char>.memory` | StructuredData | last 3 sessions: `{ { date = "2026-11-08", summary = "..." } }`, each summary ≤ 300 chars | `sessions/*.json` + `load_past_session_memories` |
+| `<char>.snapshot` | StructuredData | last known profile (skills, QP, combat level, time), used in the lobby or when the client data isn't loaded | `account_profiles_archive.md` |
+| `cache.<name>` | StructuredData | `{ fetchedAt = <time>, data = {...} }` for wiki category lists, events and so on | `st.cache_data` |
+
+Fixes carried in from the app's bugs: per-character data (the app stored everything globally), unique task ids (`nextId` counter instead of `task_<unix time>`), and real categories (the app's category filters did nothing).
+
+**Storing API keys.** PersistentDB is a local file, so the keys sit in plain text on the player's device, the same as the desktop app's `settings.json` today. The listing must say this (§12). Jagex makes masked input fields unreadable to the plugin (their content reads as an empty string), so keys are typed in a visible field that's cleared on save; afterwards only `••••` plus the last 4 characters is shown (§5.6). Settings must include a **Forget keys** button that deletes `keys`.
+
+---
+
+## 8. AI integration
+
+### 8.1 Transport
+
+Both providers are called with `HTTPRequest:Post`. The Jagex HTTP API has no streaming, so the whole answer arrives in one go. While waiting, show a "Thinking…" line with a **Stop** button (`HTTPRequest:Cancel()`).
+
+| | Gemini | OpenAI |
+|---|---|---|
+| Manifest base URL | `gemini = "https://generativelanguage.googleapis.com/"` | `openai = "https://api.openai.com/"` |
+| Path | `v1beta/models/<model>:generateContent` | `v1/chat/completions` |
+| Headers (`AddHeader`) | `Content-Type: application/json`, `x-goog-api-key: <key>` | `Content-Type: application/json`, `Authorization: Bearer <key>` |
+| Body | `{ systemInstruction = { parts = {{ text = SYS }} }, contents = { {role="user",parts={{text=...}}}, {role="model",...}, ... }, generationConfig = { temperature = 0.4, maxOutputTokens = 800 } }` | `{ model = M, temperature = 0.4, max_completion_tokens = 800, messages = { {role="system",content=SYS}, {role="user",...}, {role="assistant",...}, ... } }` |
+| Answer | `candidates[1].content.parts[*].text` | `choices[1].message.content` |
+| Errors | non-200 → show `error.message` from the body | same |
+
+Default model IDs are copied from the app (`gemini-3.6-flash`, `gpt-4o`) and can be changed in Settings, because model names change faster than plugin releases.
+
+**JSON.** The Jagex docs don't document any JSON library. The plugin ships its own small `lib/json.lua` (encode and decode, about 200 lines), written from scratch for this plugin and heavily commented. Don't paste in someone else's JSON library: its licence would have to allow uploading to AI tools, and it adds code a moderator has to review.
+
+### 8.2 Context sent with each question
+
+The order follows the app's context assembly (`app.py` 1535–1570), trimmed to the essentials. Target size is under about 6 KB per request. The app sent up to about 130 KB on the first message.
+
+1. **Player summary** (from the client, §6.2): combat level, total level, every skill level, QP, members flag. The **character name is not sent**: the prompt says "the player".
+2. **Active goals**: open To-Do items with priority (the app dropped priority).
+3. **Favourite bosses** and **owned major items**.
+4. **Quest state**: counts, plus the titles of STARTED quests and up to 15 ELIGIBLE, NOT_STARTED ones.
+5. **Past session summaries** (≤ 3 × 300 chars).
+6. **Wiki extract** (≤ 1,500 chars) for the page the user has open in the Explorer, or for the best wiki search hit on the question (§6.6). This replaces the app's 6-keyword match.
+7. **GE prices**, only for items the user has pinned or asked about by exact name (§6.9).
+8. **Conversation history**: the last 6 turns of this session. The app sent none, so every question started from scratch. This is a deliberate improvement.
+
+Dropped: the 3,000-URL "wiki links source block" (most of it was punctuation-only titles) and the raw profile text dump.
+
+### 8.3 Answer post-processing
+
+1. Convert the Markdown-ish answer into the game's text markup (§5.5): headings → bold/colour, bullets → `•`, tables → "Label: value" lines, links → citation chips.
+2. **Wiki citation check** (replaces `verify_wiki_urls` and the 8.8 MB title cache). Collect every `runescape.wiki/w/<Title>` link and send **one** batched request: `api.php?action=query&format=json&formatversion=2&redirects=1&titles=A|B|C`, up to 50 titles. Pages with `missing = true` get a ⚠ marker. This was tested on 2026-11-08 and returns e.g. `("Fake page xyz", missing=true)`.
+3. Citation chips open the page **inside the Explorer's Wiki tab** (an intro extract via the wiki API). The plugin can't open a web browser (§14 Q3).
+
+### 8.4 System prompt
+
+Based on `agent_instructions.md`, shipped as `ai/system_prompt.lua` so a moderator can read it. Changes from the app:
+
+- **Removed:** "Format stat breakdowns using clean Markdown tables". The in-game text component can't draw tables.
+- **Added, required by Jagex's guidelines:**
+  - "You give planning and preparation advice only. Never give real-time combat instructions: no prayer switching, ability rotations for a fight in progress, timing calls, or where to stand or move."
+  - "Never claim to know hidden game information, drop outcomes, or future boss mechanics."
+  - "Only discuss the player described in the context. Don't speculate about other players."
+- **Added, for the small window:** "Answer in at most ~250 words. Use short paragraphs and bullet points. Cite wiki pages as full https://runescape.wiki/w/ links."
+- Custom instructions from Settings are appended under `PLAYER CUSTOM INSTRUCTIONS:` (max 2,000 chars), as in the app.
+
+### 8.5 Session memory
+
+When the window closes, or after 30 minutes idle, save a ≤ 300-character summary of the session's first question and the To-Do items touched to `<char>.memory`. Keep only the last 3. The app used the first 100 characters of the first question, with no AI summarising. Doing the same keeps it free and predictable.
+
+---
+
+## 9. Privacy and data protection
+
+| Data | Where it goes | Why |
+|---|---|---|
+| Skill levels, QP, quest status, To-Do text, favourite bosses, owned items, question text, chat history (this session) | Gemini **or** OpenAI (whichever the player picks), USA | To answer the question |
+| Character display name | Jagex Adventurer's Log API (`secure.runescape.com`, UK) | To fetch the player's **own** recent events and quest eligibility |
+| Search words and page titles | RuneScape Wiki API (`runescape.wiki`) | Wiki search, extracts, citation check |
+| Item names | Weird Gloop GE API (`api.weirdgloop.org`) | GE prices |
+| API keys | Stay on the device (PersistentDB), and are sent only to their own provider | Authentication |
+
+- **Never sent anywhere:** chat messages from the game, other players' names or data, location, inventory contents beyond the major-items ticks.
+- **Data protection case:** Case 3 (USA, no UK adequacy). Required: endpoints, security measures (HTTPS; keys held only on the device), a privacy notice (the ICO generator is fine), a public contact email (§12), and Jagex's adequacy exception form (password `RS3API`), which collects the developer's name, country and a data-protection email.
+- **Offline mode:** without `httpAccess`, nothing leaves the device (Case 1 behaviour). Say this in the listing.
+- **Before the first AI request:** show a one-time notice: "Your question and a summary of your stats will be sent to Google/OpenAI using your own API key." Store `aiConsent = true` in `settings`.
+
+---
+
+## 10. HTTP endpoints used (all base URLs go in the manifest)
+
+| Var (`Plugin.urls.*`) | Base URL | Paths used |
+|---|---|---|
+| `wiki` | `https://runescape.wiki/` | `api.php?action=query&list=search…`, `…&prop=extracts&exintro=1&explaintext=1&redirects=1&titles=…`, `…&titles=A\|B` (existence), `…&list=categorymembers&cmtitle=Category:Quests\|Bosses\|Slayer_assignments&cmlimit=500&cmcontinue=…` |
+| `advlog` | `https://secure.runescape.com/m=adventurers-log/` | `api/v1/playerEvents/<own name>`, `api/v1/playerData/<own name>?includeQuests=true` |
+| `ge` | `https://api.weirdgloop.org/` | `exchange/history/rs/latest?name=A\|B` (the app's current source; the client API has no prices) |
+| `gemini` | `https://generativelanguage.googleapis.com/` | `v1beta/models/<model>:generateContent` |
+| `openai` | `https://api.openai.com/` | `v1/chat/completions` |
+
+- Every request sends a `User-Agent` such as `RS Helper plugin <version> (<contact email>)`. Jagex's Platform API best practices ask for this, and the wiki asks for the same.
+- The Adventurer's Log caches answers for up to 10 minutes, so the plugin caches them for 10 minutes too.
+- Wiki category lists are cached for 24 hours, like the app's `st.cache_data`. Also follow `cmcontinue`, which fixes the app's silent 500-item cut-off.
+
+---
+
+## 11. Development and testing
+
+**Setup** (from Jagex's "Accessing the API" tutorial)
+1. Join the plugin beta world through the launcher link on the tutorial page. In the lobby, use **Import save** (allowed once per hour).
+2. Put `plugin/rs-helper/` inside `<beta root>/dev_plugins/` (default `C:\ProgramData\Jagex\RuneScape-BETA\dev_plugins\`; Mac and Linux paths are on the tutorial page). A symlink or copy script in `plugin/tools/` keeps the repo as the source of truth.
+3. Open the console with `ALT` + `` ` ``, then use `prf`, `plist`, `pon rs-helper`, and `prl rs-helper` after each edit.
+4. Grant the optional permission with `ppe rs-helper httpAccess`, and test both with and without it (`ppd rs-helper httpAccess`).
+
+**Cheats for each feature** (beta only; Jagex logs cheat use)
+
+| Feature | How to test |
+|---|---|
+| Profile refresh | `!skilladdlevel attack 1` triggers `SkillTransmit` (`!skillsetlevel` doesn't). |
+| Quests | `!setvar <quest varplayer> <value>` moves a quest between states; `!allinone` completes everything. `!resetsave` resets afterwards. |
+| Items | `!give <obj> 1` (backpack), `!give <obj> 1 bank`, `!clearinv`, `!clearworn`, `!listinv bank`. |
+| Combat badges | `!skillsetlevel` on the combat skills, then check the Bosses tab. |
+
+**Test cases** (each must pass before a milestone ships)
+1. Fresh install, no permission: every Explorer tab works, and Chat shows the "grant permission / add key" state.
+2. Login, logout, world hop, and a second character on the same device: data stays separate per character.
+3. Quest filters match the in-game quest list for the imported save (spot-check 10 quests).
+4. Network errors: wrong API key (401), no credit (429), timeout, wiki down. Each shows a clear message and never freezes the window.
+5. Cancel an AI request mid-flight.
+6. Long answers: wrapping, scrolling, the 250-word guidance, citations with and without ⚠.
+7. Crash safety: change a To-Do, force-close the client, and check it's still there.
+8. Windows, Mac and Linux (Bolt) clients.
+9. Guardrails: ask "what prayer do I switch to on phase 3 right now?". The advisor must decline live combat calls and offer preparation advice.
+
+---
+
+## 12. Submission checklist (mod.io)
+
+From Jagex's "Submission process" and "Example description" pages.
+
+**Package**
+- [ ] Zip named with the version, e.g. `rs-helper-0-1-0.zip`, with `main.lua` and `plugin.json` at the **top level** of the zip.
+- [ ] Leave out `.git`, `.gitignore`, `.luarc.json`, `README.md` and dev notes.
+- [ ] `plugin.json` has every field: name, version (same as on mod.io), `contactEmailAddress`, dependencies, permissions, urls.
+- [ ] Platforms: Windows, Linux and Mac all ticked.
+- [ ] Debug logging off by default.
+
+**Listing**
+- [ ] Name: 1–50 ASCII characters. Summary: 10–150 ASCII characters, without repeating the name or starting with "This plugin…".
+- [ ] Listing image: 16:9, at least 512×288. Gallery screenshots taken in the beta world.
+- [ ] Tags include the **httpAccess** permission tag.
+
+**Required description sections**
+- [ ] **Email**: a public contact address, separate from the mod.io login.
+- [ ] **Feedback and collaboration**: e.g. GitHub issues on this repo, plus your stance on contributions.
+- [ ] **EULA**: the exact statement: "This Plugin uses software licensed by Jagex to the developer under the terms of the Jagex End User Licence Agreement (EULA) found at https://legal.jagex.com/docs/terms/eula (and all terms incorporated into it by reference). The development and any use of the Plugin is at all times subject to the Jagex EULA."
+- [ ] **Permissions**: one paragraph per URL: which data goes to which base URL, and why. Say that the plugin works without `httpAccess` in offline mode.
+- [ ] **Data protection (Case 3)**: data used, endpoints, security measures, a link to the privacy notice, and a note that API keys are stored on the device in plain text.
+
+**After uploading**
+- [ ] Fill in Jagex's adequacy exception form (data sent to the USA).
+- [ ] Ask the moderator to confirm `httpAccess` to the Gemini and OpenAI hosts (assumption A1).
+- [ ] During the moderation **code freeze**, make no mod.io edits.
+
+**Licence note.** Under the Jagex EULA, submitting grants Jagex a royalty-free, perpetual, irrevocable licence to the plugin. A plugin can be treated as abandoned after 60 days without needed maintenance.
+
+---
+
+## 13. Milestones
+
+Each milestone is small enough to review by hand and to moderate.
+
+| Version | Scope | Permissions | Review risk |
+|---|---|---|---|
+| **0.1 "Explorer"** | Window shell, Profile, Quests (from the client), To-Do, Items (manual ticks), Bosses (preparation), Settings. No network. | none | Low ("planning tools … using player-known data" are listed as Allowed) |
+| **0.2 "Wiki"** | Wiki search and reader, category lists, GE prices, Adventurer's Log events and quest eligibility | `httpAccess` (wiki, advlog, ge) | Medium (any permission is "subject to review") |
+| **0.3 "Advisor"** | AI chat (Gemini/OpenAI), context builder, citation check, session memory, prompt templates | `httpAccess` (+ gemini, openai) | Higher ("interpreted or actionable gameplay recommendations"), Case 3 data protection |
+
+Shipping 0.1 first gets a plugin through moderation once, cheaply, before adding the parts that get the most scrutiny.
+
+---
+
+## 14. Open questions to check in the beta
+
+| # | Question | Why it matters | Fallback |
+|---|---|---|---|
+| Q1 | Which Lua standard libraries exist (`os.time`, `os.date`, `utf8`)? | Cache TTLs across sessions, dates on memories | Session-only caches, and no dates on memories |
+| Q2 | Do Adventurer's Log quest IDs equal `config.Quest.FromID` IDs? Does `FromID` return nil for unknown IDs? | Listing all quests | Bundled `data/quest_ids.lua` |
+| Q3 | Can a plugin open a URL in the system browser? | Wiki links | In-game reader only |
+| Q4 | What's the worn-equipment inventory's config name? Is the bank readable when it's closed? | Item auto-detect | Manual ticks |
+| Q5 | Is `trackingAccess` worth requesting, so data survives name changes? | Per-character storage | Keyed by display name |
+| Q6 | Is the Slayer task in an API-visible VarPlayer? | Auto-filling the Slayer form | Manual form |
+| Q7 | PersistentDB size limits? | Memory, caches | Keep stored data under ~100 KB total |
+| Q8 | HTTP timeout length, maximum response size, parallel request limit? | AI calls can take 10–30 s | One request at a time, through the `lib/http` queue |
+| Q9 | Does `GetLevelUncapped` return virtual levels above 99/120? | Profile display | Show the XP alongside |
+| Q10 | Can `ui.Model:SetModel` show a boss's NPC model? (Item icons by ID are documented.) | Boss pictures | Text only |
+| Q11 | Does the game font render emoji? | Badges, catalog labels | Coloured text and game sprites |
+| Q12 | Is the AI advisor acceptable to moderators (A1)? | The whole Chat half | Ship 0.1 / 0.2 without it |
+| Q13 | Where is the Weird Gloop GE API hosted? | Data-protection case for that URL (only item names are sent) | Say so in the listing |
+| Q14 | Can players paste (Ctrl+V) into a `ui.InputField`? | **API key entry**: typing 40–160 characters by hand is painful. Check this first. | Ask on the RS Plugin Discord / API Council |
+| Q15 | Which containers scroll (`ComponentCollection.scrollable`)? Can a GroupBox be dragged with `ONDRAG` and `Mouse.GetPosition()`? | Chat log, moving the popup | Message pager; position presets |
+| Q16 | Which modifier and key combinations are free of game keybinds? Key events can't be consumed. | Hotkey | Launcher button only |
+| Q17 | Does `ui.Text` render `<col=…>` tags like chat does? | Coloured words inside one message | One Text component per colour |
+
+---
+
+## Appendix A — Desktop app: move off RuneMetrics (deadline 2026-11-10)
+
+Jagex: "All endpoints under `apps.runescape.com/runemetrics/...` are going offline on the 10th November 2026." `fetch_runemetrics_profile` (`app.py` 323–399) uses two of them. The replacements below were tested on 2026-11-08 with the account `rozraid`: all returned HTTP 200.
+
+| Old (RuneMetrics) | New (Platform API) | Format change |
+|---|---|---|
+| `profile/profile?user=N` → `skillvalues[{id, level, xp, rank}]` | `https://secure.runescape.com/m=hiscore/index_lite.json?player=N` → `skills[{id, name, rank, level, xp}]` | **`xp` is real XP here**: remove the `/10` at `app.py` 376. `id` 0 is now "Overall", and skills start at 1. |
+| (same, faster updates) | `https://secure.runescape.com/m=adventurers-log/api/v1/playerData/N?includeSkills=true` → `skills{attack:{level, fine_xp}}` | `fine_xp` is XP × 10. The map is keyed by skill name (`hitpoints`, `runecraft`). |
+| `profile/profile` → `activities` | `…/m=adventurers-log/api/v1/playerEvents/N` → `events[{type, date, text, details}]` | `date` is ISO 8601 |
+| `quests?user=N` → `quests[]` | `…/api/v1/playerData/N?includeQuests=true` → `quests{<id>:{title, status, eligible, qp, members, difficulty}}`, plus `qp`, `qp_max` | Object keyed by quest id. `userEligible` → `eligible`. Count `questscomplete` and the other totals yourself. |
+| `profile/profile` → `combatlevel`, `totalskill`, `totalxp`, `rank` | Overall row of `index_lite.json` gives total level, XP and rank | **Combat level is no longer provided.** Compute it from the skill levels. |
+| `xp-monthly` | none | No replacement |
+
+Bonus: `eligible` gives a real "quests you can start now" list (42 for `rozraid` today). That replaces the broken `get_available_quests` (`app.py` 507–524), which only checked "not completed" and had a case bug.
+
+Also: send a descriptive `User-Agent` instead of `RSAgent/1.0`. Jagex lists generic agents under "Bad".
+
+---
+
+## Appendix B — Jagex documentation used
+
+Client API (plugins), https://developer.runescape.com/rs/:
+`structure.html` (manifest, permissions, dependencies) · `core/plugin.html` (permissions, resources) · `core/http.html` (HTTPRequest) · `core/persistentdb.html` · `core/events.html` · `core/string.html` (`formatStr`) · `core/keyboard.html` · `game/player.html` · `game/inventory.html` · `game/grandexchange.html` · `game/config/questtype.html` · `ui/*` · `tutorial/1helloworld.html`–`6cheats.html` · `cheats.html` · `managing.html` · `submission/guidelines.html` · `submission/process.html` · `submission/goodpractice.html` · `submission/adequacy.html` · `submission/example.html`
+
+Platform API (web), https://developer.runescape.com/platform/:
+`best-practices.html` · `concepts.html` · `modules/adventurers-log/player-data.html` · `player-events.html` · `migrating-from-runemetrics.html` · `modules/hiscores/index-lite.html`
